@@ -45,7 +45,7 @@ function create-NumUpDown($Name, $Text, $fromLeft, $fromTop, $AddTo)
 function get-Folder($SelectFolder)
 {
     $FolderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
-    $FolderBrowser.SelectedPath = "D:\Cyclevision"
+    $FolderBrowser.SelectedPath = "D:\"
     $null = $FolderBrowser.ShowDialog()
     return $FolderBrowser.SelectedPath
 }
