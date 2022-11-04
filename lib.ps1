@@ -9,6 +9,7 @@ function create-Checkbox($name, $fromLeft, $fromTop, $AddTo)
     
     $AddTo.Controls.Add($CB)
 }
+
 function create-Label($Text, $fromLeft, $fromTop, $AddTo)
 {
     $LB = New-Object System.Windows.Forms.Label
@@ -16,6 +17,7 @@ function create-Label($Text, $fromLeft, $fromTop, $AddTo)
     $LB.Location  = New-Object System.Drawing.Point($fromLeft,$fromTop)
     $LB.AutoSize = $true
     $AddTo.Controls.Add($LB)
+    return $LB
 }
 
 function create-Timepick($Name, $Text, $fromLeft, $fromTop, $AddTo)
@@ -42,10 +44,25 @@ function create-NumUpDown($Name, $Text, $fromLeft, $fromTop, $AddTo)
     $AddTo.Controls.Add($NB)
 }
 
-function get-Folder($SelectFolder)
+function create-Button($text, $width, $height, $fromleft, $fromTop, $addTo)
 {
-    $FolderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
-    $FolderBrowser.SelectedPath = "D:\"
-    $null = $FolderBrowser.ShowDialog()
-    return $FolderBrowser.SelectedPath
+    $BT = New-Object System.Windows.Forms.Button
+    $BT.Size = New-Object System.Drawing.Size($width,$height)
+    $BT.Text = "$text"
+    $BT.Location = New-Object System.Drawing.Point($fromLeft,$FromTop)
+    
+    $addTo.Controls.Add($BT)
+    return $bt
+
+}
+
+function create-GroupBox($Name, $Height, $fromLeft, $fromTop,$addTo)
+{
+    $GP = New-Object System.Windows.Forms.GroupBox
+    $GP.Name = $Name
+    $GP.Width = 550
+    $GP.Height = $Height
+    $GP.Font = New-Object System.Drawing.Font("Times New Roman",12)
+    $GP.Location = New-Object System.Drawing.Point($fromLeft,$fromTop)
+    $addTo.Controls.Add($GP)
 }
