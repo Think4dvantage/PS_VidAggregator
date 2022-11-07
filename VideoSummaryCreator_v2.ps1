@@ -1,4 +1,5 @@
 . ($PSScriptRoot + "\lib.ps1")
+$ffmpegPath = $PSScriptRoot + "\ffmpeg\ffmpeg.exe"
 
 function new-Summary {
     [CmdletBinding()]
@@ -6,7 +7,7 @@ function new-Summary {
         [Parameter(Mandatory=$true,HelpMessage="Path to FFMPEG.exe",ValueFromPipeline=$true)][string]$ffmpegPath,
         [Parameter(Mandatory=$true,HelpMessage="Path to input Video",ValueFromPipeline=$true)][string]$VideoPath,
         [Parameter(Mandatory=$true,HelpMessage="Path to where the Output should end",ValueFromPipeline=$true)][string]$OutputPath,
-        [Parameter(Mandatory=$true,HelpMessage="Value in Seconds on how Long the Resulting Video should be",ValueFromPipeline=$true)][int]$VideoLength,
+        [Parameter(Mandatory=$true,HelpMessage="Value in Seconds on how Long the Resulting Video should be",ValueFromPipeline=$true)][int]$SummaryLength,
         [Parameter(Mandatory=$true,HelpMessage="Length of short Video Parts used for Summary",ValueFromPipeline=$true)][int]$IncLength,
         [Parameter(Mandatory=$true,HelpMessage="Array filled with start/End hashtable Videoparts",ValueFromPipeline=$true)][array]$InputParts
         
@@ -26,67 +27,98 @@ function new-Summary {
             write-error "Path to ffmpeg does not work. Please download FFMPEG and provide a Parth to the EXE"
         }
 
-        #Calculate length of the Source Video from Launch Start to LandingEnd
-        $SourceLength = $LandingBegin-$LaunchEnd
-        write-host ("SourceLength = " + $SourceLength)
+        #get the Begin and End of Video and Calculate Input Video used Length
+        $VideoBegin = ($InputParts.Start | sort-object)[0]
+        $VideoEnding = ($InputParts.End | sort-object -Descending)[0]
+        $InputLength = $VideoEnding - $VideoBegin
+        write-host ("Input Video usable length is: " + $InputLength)
 
-        $LengthOfSurroundings = ($LandingEnd - $LandingBegin) + ($LaunchEnd - $LaunchBegin)
-        write-host ("LengthOfSurroundings = " +  $LengthOfSurroundings)
+        #Create a Counter to keep Track of Summary Length beeing built. 
+        $OV_cur_len = 0
+        #Add the Input Parts to the Counter
+        foreach($entry in $InputParts)
+        {
+            $OV_cur_len = $OV_cur_len + ($entry.end - $entry.start)
+        }
+        #Calculate Seconds left in Summary after InputParts
+        $OV_var_Part_len = $SummaryLength - $OV_cur_len
+        #Calculate amounth of Parts needed to be generated
+        [int]$varParts = ($OV_var_Part_len / $IncLength)
+        #Calculate the Distance between parts
+        [int]$IncDist =  $OV_var_Part_len / $varParts
+        #Give Myself an overview
+        write-host ("Input Parts have been " + $OV_cur_len + " Seconds Long which leaves only " + $OV_var_Part_len + " Seconds of the " + $SummaryLength + " Seconds Total SummaryTime and will result in " + $varParts + " Parts generated Automatically! Increment distance is: " + $IncDist)
 
-        #IncrementLength
-        $IncSize = $SourceLength - $LengthOfSurroundings
-        write-host ("IncSize "+ $IncSize)
-        
-        #Calculate Count of Parts needed for video length
-        [int]$PartCount = $VideoLength/$IncLength
-        write-Host ("Partcount = " + $Partcount)
-
-        #Time fulfiller
-        [int]$LastPartInc = $IncSize - ($Partcount * $IncLength)
-
-        #IncDistance = 
-        [int]$IncDist = $IncSize / ($partcount + 2)
-        write-host ("IncDist = " + $IncDist)
-        
+        #Add Input Parts to Parts
+        $parts = $InputParts
     }
     
     process 
     {
-        $parts = @(@{Start=$LaunchBegin;End=$LaunchEnd},@{Start=$LandinBegin;End=$LandingEnd})
-        
+        #Create Cursor
+        $vidCursor = $VideoBegin
+        #Generate Variable Parts and add them to Parts
+        do {
+            $vidCursor = $VidCursor + $IncDist
+            $newpart = @{Start=$vidCursor;End=($vidCursor + $IncLength)}
+            
+            $start = $true
+            $end = $true
+
+            for ($i = -30; $i -lt 30; $i++) 
+            {
+                if($parts.start -contains ($newpart.start + $i))
+                {
+                    $start = $false
+                }
+
+                if($parts.end -contains ($newpart.end + $i))
+                {
+                    $end = $false
+                }
+            }
+
+            if($start -eq $true -and $end -eq $true)
+            {
+                $OV_cur_len = $OV_cur_len + ($newpart.end - $newpart.start)
+                if($OV_cur_len -gt ($SummaryLength - $incLength))
+                {
+                    $diff = $SummaryLength - $OV_cur_len
+                    $newpart.end = $newpart.end + $diff
+                    $parts += $newpart
+                    $OV_cur_len = $OV_cur_len + $diff
+                    return
+                }
+                else 
+                {
+                    $parts += $newpart
+                }
+                
+            }
+
+            
+        } until (
+            $OV_cur_len -eq $SummaryLength
+        )
 
         #Prepare first Part of Command with Launch
-        $FFMPEGCommand = "-i $VideoPath -filter_complex " + [char]34 + "[0]atrim=" + $LaunchBegin + ":" + $LaunchEnd + ",asetpts=PTS-STARTPTS[ap1],[0]trim=" + $LaunchBegin + ":" + $LaunchEnd + ",setpts=PTS-STARTPTS[p1],"
-        $CommandMid = "[p1][ap1]"
-        $cursor = $LaunchEnd + $IncDist
-        $i = 0
-        #Incrementing trough Video
-        do {
-            write-host "We're in the loop"
-            if($i -eq $partcount)
-            {
-                $FFMPEGCommand = $FFMPEGCommand + "[0]atrim=" + $cursor + ":" + ($cursor + $IncLength + $LastPartInc) +",asetpts=PTS-STARTPTS[ap"+ ($i + 2) +"],[0]trim="+ $cursor + ":" + ($cursor + $IncLength + $LastPartInc) + ",setpts=PTS-STARTPTS[p" + ($i + 2) + "],"
-            }
-            else 
-            {
-                $FFMPEGCommand = $FFMPEGCommand + "[0]atrim=" + $cursor + ":" + ($cursor + $IncLength) +",asetpts=PTS-STARTPTS[ap"+ ($i + 2) +"],[0]trim="+ $cursor + ":" + ($cursor + $IncLength) + ",setpts=PTS-STARTPTS[p" + ($i + 2) + "],"
-            }
-            
-            
-            $cursor = $Cursor + $IncDist
-            $CommandMid = $CommandMid + "[p" + ($i + 2) + "][ap" + ($i + 2) + "]"   
-            $i++
-        } while ($i -ne $partcount)
-        $lpart = $Partcount + 2
-        $FFMPEGCommand = $ffmpegCommand + "[0]atrim=" + $LandingBegin + ":" + $LandingEnd + ",asetpts=PTS-STARTPTS[ap" + $lpart +"],[0]trim=" + $LandingBegin + ":" + $LandingEnd + ",setpts=PTS-STARTPTS[p"+ $lpart + "]," + $CommandMid + "[p" + $lpart + "][ap" + $lpart + "]" 
-        $FFMPEGCommand = $FFMPEGCommand + "concat=n="+ $lpart + ":v=1:a=1[out][aout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[aout]" + [char]34 + " " + $OutputPath + " -hwaccel cuda -hwaccel_output_format cuda -y"
+        $FFMPEGCommand = "-i $VideoPath -filter_complex " + [char]34
+        foreach($part in $parts)
+        {
+            $FFMPEGCommand = $FFMPEGCommand + "[0]atrim=" + $part.start + ":" + $part.end + ",asetpts=PTS-STARTPTS[ap" + $parts.IndexOf($part) +"],[0]trim=" + $part.start + ":" + $part.end + ",setpts=PTS-STARTPTS[p" + $parts.IndexOf($part) +"],"
+            $FFMPEGMid = $FFMPEGMid + "[p" + $parts.IndexOf($part) +"]" + "[ap" + $parts.IndexOf($part) +"]"
+        }
+
+        #Stitch the Commands
+        $FFMPEGCommand = $FFMPEGCommand + $FFMPEGMid + "concat=n="+ $parts.count + ":v=1:a=1[out][aout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[aout]" + [char]34 + " " + $OutputPath + " -hwaccel cuda -hwaccel_output_format cuda -y"
+        
     }
     
     end 
     {
         #Run Command
         write-host $ffmpegCommand
-        start-process -FilePath $ffmpegPath -ArgumentList $FFMPEGCommand -PassThru -wait -nonewWindow
+        #start-process -FilePath $ffmpegPath -ArgumentList $FFMPEGCommand -PassThru -wait -nonewWindow
     }
 }
 
@@ -99,6 +131,9 @@ $fm_sum.AutoSize = $true
 $fm_sum.Width = 500
 $fm_sum.Height = 720
 $fm_sum.AutoScroll = $true
+
+$global:VideoInput = "test"
+$global:VideoOutput = "test"
 
 $fm_cursor = 5
 
@@ -114,6 +149,7 @@ $btn_VDSelect.add_click(
         if($of_VDSelect.ShowDialog() -eq "Ok")
         {
             $lb_VDPath.Text = $of_VDSelect.FileName
+            $global:VideoInput = $of_VDSelect.FileName
             $fm_sum.Refresh()
         }
         else {
@@ -142,6 +178,10 @@ create-label "Expected Summary Length:" 5 $fm_cursor $fm_sum | Out-Null
 create-Timepick "SummaryLength" "00:05:00" 150 ($fm_cursor-2) $fm_sum
 
 $fm_cursor = $fm_cursor + 25
+create-label "Length of Video Parts" 5 $fm_cursor $fm_sum | Out-Null
+create-Timepick "IncLength" "00:00:10" 150 ($fm_cursor-2) $fm_sum
+
+$fm_cursor = $fm_cursor + 25
 create-label "Output Path:" 5 $fm_cursor $fm_sum | Out-Null
 $lb_VDOut = create-label " " 100 $fm_cursor $fm_sum 
 $btn_VDOut = create-button "Output Path" 80 23 400 ($fm_cursor -2) $fm_sum
@@ -154,6 +194,7 @@ $btn_VDOut.add_click(
         if($of_VDOut.ShowDialog() -eq "Ok")
         {
             $lb_VDOut.Text = $of_VDOut.FileName
+            $global:VideoOutput = $of_VDOut.FileName
             $fm_sum.Refresh()
         }
         else {
@@ -168,23 +209,27 @@ $btn_VDRun.add_Click(
     {
         write-host "Running Summary Script"
 
-        $LaunchBegin = ($fm_sum.Controls | where-object {$_.Name -like "LaunchBegin"}).Text
-        $LaunchEnd = ($fm_sum.Controls | where-object {$_.Name -like "LaunchEnd"}).Text
-        $LandingBegin = ($fm_sum.Controls | where-object {$_.Name -like "LandingBegin"}).Text
-        $LandingEnd = ($fm_sum.Controls | where-object {$_.Name -like "LandingEnd"}).Text
+        $LaunchBegin = [int]([timespan]($fm_sum.Controls | where-object {$_.Name -like "LaunchBegin"}).text).TotalSeconds
+        write-host ("Launchbegin " + $LaunchBegin)
+        $LaunchEnd = [int]([timespan]($fm_sum.Controls | where-object {$_.Name -like "LaunchEnd"}).text).TotalSeconds
+        write-host ("LaunchEnd " + $LaunchEnd)
+        $LandingBegin = [int]([timespan]($fm_sum.Controls | where-object {$_.Name -like "LandingBegin"}).text).TotalSeconds
+        write-host ("Landing Begin " + $LandingBegin)
+        $LandingEnd = [int]([timespan]($fm_sum.Controls | where-object {$_.Name -like "LandingEnd"}).text).TotalSeconds
+        write-host ("Landing End " + $LandingEnd)
+        $SummaryLength = [int]([timespan]($fm_sum.Controls | where-object {$_.Name -like "SummaryLength"}).text).TotalSeconds
+        write-host ("Summary Length " + $SummaryLength)
+        $IncLength = [int]([timespan]($fm_sum.Controls | where-object {$_.Name -like "IncLength"}).text).TotalSeconds
+        write-host ("IncLength " + $IncLength)
+        write-host ("this is the Input Video " + $VideoInput)
+        write-host ("this is the Output Video" + $VideoOutput)
 
         #Todo: Get Inputs from Form and trigger Summary Creation
-        $InputParts = @(@{Start=0;End=15},@{Start=3640;End=3650})
+        $InputParts = @(@{Start=$LaunchBegin;End=$LaunchEnd},@{Start=$LandingBegin;End=$LandingEnd})
         
-        #new-summary -ffmpegPath "C:\git\PS_VidAggregator\ffmpeg\ffmpeg.exe" -VideoPath "Z:\alf\ParaglidingVids\2022-10-07-LongFlight.mp4" -OutputPath "D:\Insta360Parts\20221007-Summary.mp4" -IncLength 10 -VideoLength 321 -InputParts $inputParts
+        new-summary -ffmpegPath $ffmpegpath -VideoPath $VideoInput -OutputPath $VideoOutput -IncLength $IncLength -SummaryLength $SummaryLength -InputParts $inputParts
 
     }
 )
 #Show Form
 $fm_sum.ShowDialog()
-
-#Creating Array with Input of Launch Start and Landing Start
-
-
-
-#create-summary -ffmpegPath "C:\git\PS_VidAggregator\ffmpeg\ffmpeg.exe" -VideoPath "D:\Insta360Parts\20221016-Full.mp4" -OutputPath "D:\Insta360Parts\20221016-Summary.mp4" -LaunchBegin 0 -LaunchEnd 12 -LandingBegin 3470 -LandingEnd 3485 -IncLength 10 -VideoLength 270
