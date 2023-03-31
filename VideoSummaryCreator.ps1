@@ -10,7 +10,7 @@ function aggregate-Video {
     
     begin {
         $ffmpeg = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
-        $ffprobe = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe.exe"
+        $ffprobe = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe"
         #Checking if FFMPEG is present
         if(!(test-path $ffmpeg))
         {
@@ -132,4 +132,4 @@ function aggregate-Video {
 #aggregate-Video -SourceVideo "D:\Insta360Parts\VID_20230305_Flight1.mp4" -Highlights $Highlights -OutputLength 120 -PartLength 10 -OutputPath "D:\Insta360Parts\2023-03-05_Flight1-Short.mp4"
 
 $Highlights = @([PSCustomObject]@{start=885; end=900}, [PSCustomObject]@{start=1270; end=1280}, [PSCustomObject]@{start=1785; end=1795}, [PSCustomObject]@{start=3300; end=3320})
-aggregate-Video -SourceVideo "D:\Insta360Parts\VID_20230305_Flight2.mp4" -Highlights $Highlights -OutputLength 180 -PartLength 5 -OutputPath "D:\Insta360Parts\2023-03-05_Flight2-Short.mp4"
+aggregate-Video -SourceVideo "D:\Insta360Parts\VID_20230305_Flight2.mp4" -Highlights $Highlights -OutputLength 180 -PartLength 5 -OutputPath "D:\Insta360Parts\2023-03-05_Flight2.2-Short.mp4"
