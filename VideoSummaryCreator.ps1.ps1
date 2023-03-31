@@ -17,6 +17,7 @@ function aggregate-Video {
             $ffmpegDL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
             Invoke-WebRequest -Uri $ffmpegDL -OutFile ".\ffmpeg.zip"
             Expand-archive -Path ".\ffmpeg.zip" -DestinationPath ".\ffmpeg\"
+            remove-item -path ".\ffmpeg.zip" -Force -Recurse
         }
 
         start-process -FilePath $ffprobe -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + $SourceVideoPath) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
