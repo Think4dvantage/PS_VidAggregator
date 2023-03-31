@@ -9,7 +9,17 @@ function aggregate-Video {
     )
     
     begin {
-        start-process -FilePath "C:\git\GleitschirmVideoCreator\ffmpeg\ffprobe.exe" -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + $SourceVideoPath) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
+        $ffmpeg = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
+        $ffprobe = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe.exe"
+        #Checking if FFMPEG is present
+        if(!(test-path $ffmpeg))
+        {
+            $ffmpegDL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+            Invoke-WebRequest -Uri $ffmpegDL -OutFile ".\ffmpeg.zip"
+            Expand-archive -Path ".\ffmpeg.zip" -DestinationPath ".\ffmpeg\"
+        }
+
+        start-process -FilePath $ffprobe -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + $SourceVideoPath) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
         $SourceVideoLength = (get-content C:\Windows\Temp\length.txt).Split(".")[0]
         write-host ("Source Video Length: " + $SourceVideoLength)
 
@@ -21,7 +31,6 @@ function aggregate-Video {
             }
             return $tmplngth
         }
-
 
         $provLength = 0 
         foreach ($part in $Highlights) {
@@ -112,7 +121,7 @@ function aggregate-Video {
     
     end 
     {
-        start-process -FilePath "C:\git\GleitschirmVideoCreator\ffmpeg\ffprobe.exe" -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + $OutputPath) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
+        start-process -FilePath $ffprobe -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + $OutputPath) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
         $SourceVideoLength = (get-content C:\Windows\Temp\length.txt).Split(".")[0]
         write-host ("Output Video Length: " + $SourceVideoLength)   
     }

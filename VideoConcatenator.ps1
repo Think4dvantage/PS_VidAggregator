@@ -11,6 +11,16 @@ function Concatenate-Video {
     {
         #Creating Temporary VidParts File
         New-Item -Path $TempVidFile -Force
+
+        $ffmpeg = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
+        #Checking if FFMPEG is present
+        if(!(test-path $ffmpeg))
+        {
+            $ffmpegDL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+            Invoke-WebRequest -Uri $ffmpegDL -OutFile ".\ffmpeg.zip"
+            Expand-archive -Path ".\ffmpeg.zip" -DestinationPath ".\ffmpeg\"
+            remove-item -path ".\ffmpeg.zip" -Force -Recurse
+        }
     }
     
     process 
@@ -23,7 +33,7 @@ function Concatenate-Video {
             add-content -Path $TempVidFile -Value ("file " + [char]39 + $video + [char]39)
         }
         #run Concatenation
-        #start-process -FilePath ("C:\git\GleitschirmVideoCreator\ffmpeg\ffmpeg.exe") -ArgumentList ("-f concat -safe 0 -i " + $TempVidFile + " -c copy " + $Output +" -y") -PassThru -Wait -NoNewWindow
+        start-process -FilePath $ffmpeg -ArgumentList ("-f concat -safe 0 -i " + $TempVidFile + " -c copy " + $Output +" -y") -PassThru -Wait -NoNewWindow
     }
     
     end {
@@ -40,4 +50,4 @@ function Concatenate-Video {
 
 $VidParts = (get-childitem "D:\Insta360Parts\VID_20230305_Flight1FullPart*" -filter "*.mp4" | select-object -Property FullName).FullName
 
-Concatenate-Video -VideoParts $VidParts -deleteParts $true -Output "D:\Insta360Parts\VID_20230305_Flight2.mp4"
+Concatenate-Video -VideoParts $VidParts -deleteParts $true -Output "D:\Insta360Parts\VID_20230305_Flight2.2.mp4"
