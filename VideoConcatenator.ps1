@@ -48,6 +48,6 @@ function Concatenate-Video {
     }
 }
 
-$VidParts = (get-childitem "D:\Insta360Parts\VID_20230305_Flight1FullPart*" -filter "*.mp4" | select-object -Property FullName).FullName
+$VidParts = (get-childitem "D:\Insta360Parts\VID_20230406_FullFlight*" -filter "*.mp4" | select-object -Property FullName).FullName
 
-Concatenate-Video -VideoParts $VidParts -deleteParts $true -Output "D:\Insta360Parts\VID_20230305_Flight2.2.mp4"
+Concatenate-Video -VideoParts $VidParts -deleteParts $false -Output "D:\Insta360Parts\2023-04-06-FullFlight.mp4"
