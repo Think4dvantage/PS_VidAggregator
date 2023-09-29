@@ -7,3 +7,6 @@ start-process -FilePath "C:\git\PS_VidAggregator\ffmpeg\ffprobe.exe" -ArgumentLi
 
 #Command to Trim and Concatenate a Video
 ffmpeg.exe -i D:\Insta360Parts\20221016-Full.mp4 -filter_complex "[0]atrim=3:12,asetpts=PTS-STARTPTS[ap1],[0]trim=3:12,setpts=PTS-STARTPTS[p1],[0]atrim=600:620,asetpts=PTS-STARTPTS[ap2],[0]trim=600:620,setpts=PTS-STARTPTS[p2],[p1][ap1][p2][ap2]concat=n=2:v=1:a=1[out][aout]" -map "[out]" -map "[aout]" D:\test.mp4 -hwaccel cuda -hwaccel_output_format cuda -y
+
+#Command to Change Encoding of File
+start-process -FilePath ("C:\git\WKC\ffmpeg\ffmpeg.exe") -ArgumentList ("-i " +$video + " -pix_fmt yuv420p -b:v 4000k -c:v libx264 " + $video.Replace("AVI","MP4") + " -y") -PassThru -Wait -NoNewWindow
