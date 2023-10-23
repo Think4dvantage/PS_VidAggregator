@@ -67,7 +67,7 @@ function aggregate-Video {
                 for ($i = 0; $i -lt ($Highlights.Count -1); $i++) {
                     write-host $i
                     $Highlights[$i].end = $Highlights[$i].end + 1
-                    if((calc-partLength $Highlights) -eq $OutputLength)
+                    if((calc-partLength $Highlights) -ge $OutputLength)
                     {
                         break
                     }
@@ -75,21 +75,21 @@ function aggregate-Video {
                 break
             }
             $inputPart = ([PSCustomObject]@{start=$start; end=$end})
+            $Highlights = ($Highlights | sort-object start)
             foreach ($part in $Highlights) {
                 if ($inputPart.start -ge $part.start -and $inputPart.start -le $part.end -and $inputPart.end -ge $part.start -and $inputPart.end -le $part.end) {
                     write-host ("Input " + $InputPart + " was too close - skipping")
                     continue
                 }
                 else {
-        
+                    $provLength = calc-partLength $Highlights
                     if (($OutputLength - $provLength ) -le $partLength) 
                     {
-                        for ($i = 0; $i -lt $partLength; $i++) {
+                        $i = 0
+                        while ($provLength -le $OutputLength) {
                             $Highlights[$i].End = $Highlights[$i].end + 1
-                            if((calc-partLength $Highlights) -eq $OutputLength)
-                            {
-                                break
-                            }
+                            $provLength = calc-partLength $Highlights
+                            $i++
                         }
                     }
                 }
@@ -99,10 +99,7 @@ function aggregate-Video {
         } while (
             $provLength -le $OutputLength
         )
-        write-host "We got out of the Loop"
         $Highlights = ($Highlights | sort-object start)
-        write-host $Highlights
-        write-host ( $provLength = calc-partLength $Highlights)
         
     }
     
@@ -221,5 +218,20 @@ function aggregate-Video {
 #$Highlights = @([PSCustomObject]@{start=24; end=34}, [PSCustomObject]@{start=6374; end=6384}, [PSCustomObject]@{start=9400; end=9410}, [PSCustomObject]@{start=11487; end=11497}, [PSCustomObject]@{start=12390; end=12403})
 #aggregate-Video -SourceVideo "D:\Insta360Parts\2023-08-19_FullFlight.mp4" -Highlights $Highlights -OutputLength 220 -PartLength 5 -OutputPath "D:\Insta360Parts\2023-08-19_Short.mp4"
 
-$Highlights = @([PSCustomObject]@{start=7; end=15}, [PSCustomObject]@{start=1068; end=1076})
-aggregate-Video -SourceVideo "D:\Insta360Parts\2023-09-20_FullFlight1.mp4" -Highlights $Highlights -OutputLength 220 -PartLength 5 -OutputPath "D:\Insta360Parts\2023-09-20_-Short1.mp4"
+#$Highlights = @([PSCustomObject]@{start=7; end=15}, [PSCustomObject]@{start=1068; end=1076})
+#aggregate-Video -SourceVideo "D:\Insta360Parts\2023-09-20_FullFlight1.mp4" -Highlights $Highlights -OutputLength 220 -PartLength 5 -OutputPath "D:\Insta360Parts\2023-09-20_-Short1.mp4"
+
+#$Highlights = @([PSCustomObject]@{start=4; end=14}, [PSCustomObject]@{start=1130; end=1140})
+#aggregate-Video -SourceVideo "D:\Insta360Parts\2023-09-27_FullFlight.mp4" -Highlights $Highlights -OutputLength 90 -PartLength 5 -OutputPath "D:\Insta360Parts\2023-09-27_-Short2.mp4"
+
+#$Highlights = @([PSCustomObject]@{start=0; end=10}, [PSCustomObject]@{start=1927; end=1936})
+#aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-06_FullFlight1.mp4" -Highlights $Highlights -OutputLength 120 -PartLength 5 -OutputPath "D:\Insta360Parts\2023-10-06_-Short1.mp4"
+
+#$Highlights = @([PSCustomObject]@{start=3; end=15}, [PSCustomObject]@{start=45; end=55}, [PSCustomObject]@{start=1399; end=1406})
+#aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-06_FullFlight2.mp4" -Highlights $Highlights -OutputLength 90 -PartLength 5 -OutputPath "D:\Insta360Parts\2023-10-06_-Short2.mp4"
+
+#$Highlights = @([PSCustomObject]@{start=8; end=16}, [PSCustomObject]@{start=28; end=37}, [PSCustomObject]@{start=180; end=185}, [PSCustomObject]@{start=204; end=209}, [PSCustomObject]@{start=486; end=493}, [PSCustomObject]@{start=682; end=690}, [PSCustomObject]@{start=696; end=702}, [PSCustomObject]@{start=774; end=784}, [PSCustomObject]@{start=2332; end=2337}, [PSCustomObject]@{start=2350; end=2362})
+#aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-13_FullFlight.mp4" -Highlights $Highlights -OutputLength 150 -PartLength 5 -OutputPath "D:\Insta360Parts\2023-10-13_-Short.mp4"
+
+$Highlights = @([PSCustomObject]@{start=0; end=9}, [PSCustomObject]@{start=17; end=29}, [PSCustomObject]@{start=275; end=296}, [PSCustomObject]@{start=674; end=681}, [PSCustomObject]@{start=688; end=700})
+aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-22_FullFlight.mp4" -Highlights $Highlights -OutputLength 90 -PartLength 4 -OutputPath "D:\Insta360Parts\2023-10-22_-Short.mp4"
