@@ -233,5 +233,5 @@ function aggregate-Video {
 #$Highlights = @([PSCustomObject]@{start=8; end=16}, [PSCustomObject]@{start=28; end=37}, [PSCustomObject]@{start=180; end=185}, [PSCustomObject]@{start=204; end=209}, [PSCustomObject]@{start=486; end=493}, [PSCustomObject]@{start=682; end=690}, [PSCustomObject]@{start=696; end=702}, [PSCustomObject]@{start=774; end=784}, [PSCustomObject]@{start=2332; end=2337}, [PSCustomObject]@{start=2350; end=2362})
 #aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-13_FullFlight.mp4" -Highlights $Highlights -OutputLength 150 -PartLength 5 -OutputPath "D:\Insta360Parts\2023-10-13_-Short.mp4"
 
-$Highlights = @([PSCustomObject]@{start=0; end=9}, [PSCustomObject]@{start=17; end=29}, [PSCustomObject]@{start=275; end=296}, [PSCustomObject]@{start=674; end=681}, [PSCustomObject]@{start=688; end=700})
-aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-22_FullFlight.mp4" -Highlights $Highlights -OutputLength 90 -PartLength 4 -OutputPath "D:\Insta360Parts\2023-10-22_-Short.mp4"
+#$Highlights = @([PSCustomObject]@{start=0; end=9}, [PSCustomObject]@{start=17; end=29}, [PSCustomObject]@{start=275; end=296}, [PSCustomObject]@{start=674; end=681}, [PSCustomObject]@{start=688; end=700})
+#aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-22_FullFlight.mp4" -Highlights $Highlights -OutputLength 90 -PartLength 4 -OutputPath "D:\Insta360Parts\2023-10-22_-Short.mp4"

@@ -1,3 +1,6 @@
+#Import System.Windows.Forms to your Script
+Add-Type -assembly System.Windows.Forms
+
 function create-Checkbox($name, $fromLeft, $fromTop, $AddTo)
 {
     $CB = New-Object System.Windows.Forms.Checkbox
@@ -10,12 +13,17 @@ function create-Checkbox($name, $fromLeft, $fromTop, $AddTo)
     $AddTo.Controls.Add($CB)
 }
 
-function create-Label($Text, $fromLeft, $fromTop, $AddTo)
+function create-Label($Text, $fromLeft, $fromTop, $AddTo, $Type)
 {
     $LB = New-Object System.Windows.Forms.Label
     $LB.Text = $Text
     $LB.Location  = New-Object System.Drawing.Point($fromLeft,$fromTop)
     $LB.AutoSize = $true
+    if($Type -eq "Title")
+    {
+        $LB.Font = New-Object System.Drawing.Font("Times New Roman",20)
+    }
+
     $AddTo.Controls.Add($LB)
     return $LB
 }
@@ -56,13 +64,25 @@ function create-Button($text, $width, $height, $fromleft, $fromTop, $addTo)
 
 }
 
-function create-GroupBox($Name, $Height, $fromLeft, $fromTop,$addTo)
+function create-GroupBox($Name, $Height, $Width, $fromLeft, $fromTop,$addTo)
 {
     $GP = New-Object System.Windows.Forms.GroupBox
     $GP.Name = $Name
-    $GP.Width = 550
+    $GP.Width = $Width
     $GP.Height = $Height
     $GP.Font = New-Object System.Drawing.Font("Times New Roman",12)
     $GP.Location = New-Object System.Drawing.Point($fromLeft,$fromTop)
     $addTo.Controls.Add($GP)
+    return $GP
+}
+
+function create-TextBox($Name, $width, $height, $fromLeft, $FromTop, $addTo)
+{
+    $TB = New-Object System.Windows.Forms.TextBox
+    $TB.Name = $name
+    $TB.width = $width
+    $TB.MaxLength = 200
+    $TB.Location = New-Object System.Drawing.Point($fromLeft,$FromTop)
+    $addTo.Controls.Add($TB)
+    
 }
