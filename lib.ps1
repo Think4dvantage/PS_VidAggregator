@@ -80,7 +80,7 @@ function create-TextBox($Name, $width, $height, $fromLeft, $FromTop, $addTo)
 {
     $TB = New-Object System.Windows.Forms.TextBox
     $TB.Name = $name
-    $TB.Text = "BLA"
+    #$TB.Text = "BLA"
     $TB.width = $width
     $TB.MaxLength = 200
     $TB.Location = New-Object System.Drawing.Point($fromLeft,$FromTop)
