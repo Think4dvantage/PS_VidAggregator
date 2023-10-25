@@ -111,7 +111,16 @@ function aggregate-Video {
                 $concat = ""
                 for ($i = 0; $i -lt $Highlights.Count; $i++) 
                 {
-                    $cut += "[0]atrim=" + $Highlights[$i].start + ":" + $Highlights[$i].end + ",asetpts=PTS-STARTPTS[ap" + $i + "],[0]trim=" + $Highlights[$i].start + ":" + $Highlights[$i].end + ",setpts=PTS-STARTPTS[p"+ $i + "],"
+                    #Adding Comment if one is Available
+                    if($Highlights[$i].Comment -ne $null)
+                    {
+                        $Comment=",drawtext=text='" + $Highlights[$i].Comment + "':fontcolor=white:fontsize=130:x=(w-tw)/2: y=h-(2*lh):font=Arial Black"
+                    }
+                    else 
+                    {
+                        $Comment = $null
+                    }
+                    $cut += "[0]atrim=" + $Highlights[$i].start + ":" + $Highlights[$i].end + ",asetpts=PTS-STARTPTS[ap" + $i + "],[0]trim=" + $Highlights[$i].start + ":" + $Highlights[$i].end + $Comment + ",setpts=PTS-STARTPTS[p"+ $i + "],"
                     $concat += "[p" + $i +"][ap" + $i + "]"
                 }
                 $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " " + $OutputPath + " -y"
@@ -235,3 +244,6 @@ function aggregate-Video {
 
 #$Highlights = @([PSCustomObject]@{start=0; end=9}, [PSCustomObject]@{start=17; end=29}, [PSCustomObject]@{start=275; end=296}, [PSCustomObject]@{start=674; end=681}, [PSCustomObject]@{start=688; end=700})
 #aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-22_FullFlight.mp4" -Highlights $Highlights -OutputLength 90 -PartLength 4 -OutputPath "D:\Insta360Parts\2023-10-22_-Short.mp4"
+
+#$Highlights = @([PSCustomObject]@{start=0; end=9; comment="Start auf der Breitlauenen Tom"}, [PSCustomObject]@{start=17; end=29; comment="Mein Start"}, [PSCustomObject]@{start=275; end=296; comment="SkyDiver Besuch"}, [PSCustomObject]@{start=674; end=681;comment="Meine Landung auf der Höhenmatte"}, [PSCustomObject]@{start=688; end=700;comment="Landung Tom"})
+#aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-22_FullFlight.mp4" -Highlights $Highlights -OutputLength 70 -PartLength 4 -OutputPath "D:\Insta360Parts\2023-10-22_-Short.mp4"
