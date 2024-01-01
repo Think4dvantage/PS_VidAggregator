@@ -247,3 +247,6 @@ function aggregate-Video {
 
 #$Highlights = @([PSCustomObject]@{start=0; end=9; comment="Start auf der Breitlauenen Tom"}, [PSCustomObject]@{start=17; end=29; comment="Mein Start"}, [PSCustomObject]@{start=275; end=296; comment="SkyDiver Besuch"}, [PSCustomObject]@{start=674; end=681;comment="Meine Landung auf der Höhenmatte"}, [PSCustomObject]@{start=688; end=700;comment="Landung Tom"})
 #aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-22_FullFlight.mp4" -Highlights $Highlights -OutputLength 70 -PartLength 4 -OutputPath "D:\Insta360Parts\2023-10-22_-Short.mp4"
+
+$Highlights = @([PSCustomObject]@{start=2; end=12; comment="Start direkt vor Jo Jufer"}, [PSCustomObject]@{start=588; end=602; comment="Easy Landung in Inti"}, [PSCustomObject]@{start=611; end=618;comment="Armer Kerl :-("})
+aggregate-Video -SourceVideo "D:\Insta360Parts\2023-11-23_FullFlight.mp4" -Highlights $Highlights -OutputLength 80 -PartLength 4 -OutputPath "D:\Insta360Parts\2023-11-23_-Short.mp4"

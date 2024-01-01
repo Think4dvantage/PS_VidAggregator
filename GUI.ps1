@@ -55,9 +55,14 @@ $BTNrun.Add_Click(
     {
         write-host "RUN Button has been clicked"
         $manualHighlights = @()
-        $manHigh = (($SummaryGUI.Controls | where-object {$_.Name -eq ("GPHighlights")}).Controls | where-object {$_.Name -eq ("HIGHLIGHTElement") -and $_.HasChildren -eq $true}).Controls
+        $manHigh = (($SummaryGUI.Controls | where-object {$_.Name -eq ("GPHighlights")}).Controls | where-object {$_.Name -eq ("HIGHLIGHTElement") -and $_.Controls -like "*DateTimePicker*"}).Controls | where-object {$_.Name -ne $null}
+        $start = $null
+        $end = $null
+        $comment = $null
         foreach($High in $manHigh)
         {
+            write-host $high
+            write-host "--------------------------"
             $Start = ($High | where-object {$_.Name -like "TPStart"}).Text
             $End = ($High | where-object {$_.Name -like "TPEnd"}).Text
             $Comment = ($High | where-object {$_.Name -like "TBComment"}).Text
