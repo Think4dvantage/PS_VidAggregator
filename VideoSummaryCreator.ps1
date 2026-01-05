@@ -9,20 +9,49 @@ function aggregate-Video {
     )
     
     begin {
-        $ffmpeg = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl-shared\bin\ffmpeg.exe"
-        $ffprobe = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl-shared\bin\ffprobe.exe"
+        # Validate input parameters
+        if(![System.IO.File]::Exists($SourceVideoPath)) {
+            write-host "Source video file not found: $SourceVideoPath" -ForegroundColor Red
+            return $false
+        }
+        
+        if($Highlights.Count -eq 0) {
+            write-host "No highlights provided" -ForegroundColor Red
+            return $false
+        }
+        
+        if($OutputLength -le 0) {
+            write-host "Invalid output length: $OutputLength" -ForegroundColor Red
+            return $false
+        }
+        
+        $ffmpeg = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
+        $ffprobe = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe"
         #Checking if FFMPEG is present
         if(!(test-path $ffmpeg))
         {
-            $ffmpegDL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
-            Invoke-WebRequest -Uri $ffmpegDL -OutFile ".\ffmpeg.zip"
-            Expand-archive -Path ".\ffmpeg.zip" -DestinationPath ".\ffmpeg\"
-            remove-item -path ".\ffmpeg.zip" -Force -Recurse
+            write-host "FFmpeg not found, downloading..."
+            try {
+                $ffmpegDL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
+                Invoke-WebRequest -Uri $ffmpegDL -OutFile ".\ffmpeg.zip"
+                Expand-archive -Path ".\ffmpeg.zip" -DestinationPath ".\ffmpeg\"
+                remove-item -path ".\ffmpeg.zip" -Force -Recurse
+            }
+            catch {
+                write-host "Failed to download FFmpeg: $($_.Exception.Message)" -ForegroundColor Red
+                return $false
+            }
         }
 
-        start-process -FilePath $ffprobe -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + $SourceVideoPath) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
-        $SourceVideoLength = (get-content C:\Windows\Temp\length.txt).Split(".")[0]
-        write-host ("Source Video Length: " + $SourceVideoLength)
+        try {
+            start-process -FilePath $ffprobe -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + $SourceVideoPath) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
+            $SourceVideoLength = (get-content C:\Windows\Temp\length.txt).Split(".")[0]
+            write-host ("Source Video Length: " + $SourceVideoLength)
+        }
+        catch {
+            write-host "Failed to detect video length: $($_.Exception.Message)" -ForegroundColor Red
+            return $false
+        }
 
         function calc-partLength($hl)
         {
@@ -134,7 +163,12 @@ function aggregate-Video {
                 $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
 
                 write-host $arguments
-                start-process -FilePath $ffmpeg -ArgumentList $arguments -PassThru -wait -nonewWindow
+                $process = start-process -FilePath $ffmpeg -ArgumentList $arguments -PassThru -wait -nonewWindow
+                
+                if($process.ExitCode -ne 0) {
+                    write-host "FFmpeg process failed with exit code: $($process.ExitCode)" -ForegroundColor Red
+                    return $false
+                }
             }
     
     end 

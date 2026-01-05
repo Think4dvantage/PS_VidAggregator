@@ -10,6 +10,12 @@ $FileBrowser.Filter = "mp4 files (*.mp4)|*.mp4|All files (*.*)|*.*";
 $null = $FileBrowser.ShowDialog()
 $VideoFile = $FileBrowser.FileName
 
+# Validate file selection
+if([string]::IsNullOrWhiteSpace($VideoFile) -or !(Test-Path $VideoFile)) {
+    [System.Windows.Forms.MessageBox]::Show("No valid video file selected. Exiting.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+    exit
+}
+
 #Setup Archive Directory
 $Global:archiveDir = Join-Path $PSScriptRoot "archive"
 if(!(Test-Path $Global:archiveDir)) {
@@ -21,50 +27,79 @@ $Global:videoIdentifier = [System.IO.Path]::GetFileNameWithoutExtension($VideoFi
 $Global:archiveFile = Join-Path $Global:archiveDir "$Global:videoIdentifier.json"
 $Global:isLoading = $false
 
-#Save Function
+# Debounce timer for save operations
+$Global:saveTimer = New-Object System.Windows.Forms.Timer
+$Global:saveTimer.Interval = 2000  # 2 seconds
+$Global:saveTimer.Add_Tick({
+    $Global:saveTimer.Stop()
+    Save-GUIDataImmediate
+})
+
+#Save Function (debounced)
 function Save-GUIData {
     if($Global:isLoading) {
         write-host "Skipping save during loading"
         return
     }
     
-    $data = @{
-        SummaryLength = $TPSummaryLength.Text
-        SummaryName = $TBSummaryName.Text
-        Highlights = @()
+    # Reset the timer - this delays the save
+    $Global:saveTimer.Stop()
+    $Global:saveTimer.Start()
+}
+
+#Immediate Save Function (no debounce)
+function Save-GUIDataImmediate {
+    if($Global:isLoading) {
+        write-host "Skipping save during loading"
+        return
     }
     
-    $highlightGroupBoxes = ($SummaryGUI.Controls | where-object {$_.Name -eq ("GPHighlights")}).Controls | where-object {$_.Name -eq ("HIGHLIGHTElement")}
-    foreach($highlightBox in $highlightGroupBoxes) {
-        $startControl = $highlightBox.Controls | where-object {$_.Name -like "TPStart"}
-        $endControl = $highlightBox.Controls | where-object {$_.Name -like "TPEnd"}
-        $commentControl = $highlightBox.Controls | where-object {$_.Name -like "TBComment"}
-        
-        $data.Highlights += @{
-            Start = $startControl.Text
-            End = $endControl.Text
-            Comment = $commentControl.Text
+    try {
+        $data = @{
+            SummaryLength = $TPSummaryLength.Text
+            SummaryName = $TBSummaryName.Text
+            Highlights = @()
         }
-    }
     
-    $data | ConvertTo-Json -Depth 10 | Set-Content -Path $Global:archiveFile -Encoding UTF8
-    write-host "Data saved to $Global:archiveFile"
+        $highlightGroupBoxes = ($SummaryGUI.Controls | where-object {$_.Name -eq ("GPHighlights")}).Controls | where-object {$_.Name -eq ("HIGHLIGHTElement")}
+        foreach($highlightBox in $highlightGroupBoxes) {
+            $startControl = $highlightBox.Controls | where-object {$_.Name -like "TPStart"}
+            $endControl = $highlightBox.Controls | where-object {$_.Name -like "TPEnd"}
+            $commentControl = $highlightBox.Controls | where-object {$_.Name -like "TBComment"}
+        
+            if($startControl -and $endControl) {
+                $data.Highlights += @{
+                    Start = $startControl.Text
+                    End = $endControl.Text
+                    Comment = if($commentControl) { $commentControl.Text } else { "" }
+                }
+            }
+        }
+    
+        $data | ConvertTo-Json -Depth 10 | Set-Content -Path $Global:archiveFile -Encoding UTF8
+        write-host "Data saved to $Global:archiveFile"
+    }
+    catch {
+        write-host "Error saving data: $($_.Exception.Message)" -ForegroundColor Red
+        [System.Windows.Forms.MessageBox]::Show("Failed to save data: $($_.Exception.Message)", "Save Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+    }
 }
 
 #Load Function
 function Load-GUIData {
-    if(Test-Path $Global:archiveFile) {
-        $Global:isLoading = $true
-        write-host "Loading data from $Global:archiveFile"
-        $data = Get-Content -Path $Global:archiveFile -Raw | ConvertFrom-Json
+    try {
+        if(Test-Path $Global:archiveFile) {
+            $Global:isLoading = $true
+            write-host "Loading data from $Global:archiveFile"
+            $data = Get-Content -Path $Global:archiveFile -Raw | ConvertFrom-Json
         
-        # Load Summary Length and Name
-        if($data.SummaryLength) {
-            $TPSummaryLength.Text = $data.SummaryLength
-        }
-        if($data.SummaryName) {
-            $TBSummaryName.Text = $data.SummaryName
-        }
+            # Load Summary Length and Name
+            if($data.SummaryLength) {
+                $TPSummaryLength.Text = $data.SummaryLength
+            }
+            if($data.SummaryName) {
+                $TBSummaryName.Text = $data.SummaryName
+            }
         
         # Load Highlights
         if($data.Highlights -and $data.Highlights.Count -gt 0) {
@@ -89,9 +124,49 @@ function Load-GUIData {
                 $TBCommentLoad.Add_LostFocus({ Save-GUIData })
                 $RandoHighlight.Controls.Add($TBCommentLoad)
                 
+                # Add Delete Button
+                $BTDelete = create-Button -text "X" -width 30 -height 30 -fromleft 900 -fromTop 20 -addTo $RandoHighlight
+                $BTDelete.BackColor = [System.Drawing.Color]::IndianRed
+                $BTDelete.Add_Click({
+                    # Remove this highlight groupbox
+                    $highlightToRemove = $this.Parent
+                    $Highlights.Controls.Remove($highlightToRemove)
+                    
+                    # Recalculate positions and heights
+                    $remainingHighlights = ($Highlights.Controls | where-object {$_.Name -eq "HIGHLIGHTElement"})
+                    $newTop = 15
+                    foreach($hl in $remainingHighlights) {
+                        $hl.Location = New-Object System.Drawing.Point(5, $newTop)
+                        $newTop += 78
+                    }
+                    
+                    # Update container height and global offset
+                    $Highlights.Height = 25 + ($remainingHighlights.Count * 78)
+                    $Global:highFromTop = $newTop
+                    
+                    # Update display and save
+                    $SummaryGUI.Update()
+                    Update-HighlightsTotal
+                    Save-GUIDataImmediate
+                })
+                
                 # Add LostFocus to time pickers
-                ($RandoHighlight.Controls | where-object {$_.Name -like "TPStart"}).Add_LostFocus({ Save-GUIData; Update-HighlightsTotal })
-                ($RandoHighlight.Controls | where-object {$_.Name -like "TPEnd"}).Add_LostFocus({ Save-GUIData; Update-HighlightsTotal })
+                $tpStart = ($RandoHighlight.Controls | where-object {$_.Name -like "TPStart"})
+                $tpEnd = ($RandoHighlight.Controls | where-object {$_.Name -like "TPEnd"})
+                
+                # Auto-fill End time when Start is modified
+                $tpStart.Add_LostFocus({
+                    $parentBox = $this.Parent
+                    $startCtrl = $this
+                    $endCtrl = $parentBox.Controls | where-object {$_.Name -like "TPEnd"}
+                    if($endCtrl) {
+                        $endCtrl.Value = $startCtrl.Value.AddSeconds(5)
+                    }
+                    Save-GUIData
+                    Update-HighlightsTotal
+                })
+                
+                $tpEnd.Add_LostFocus({ Save-GUIData; Update-HighlightsTotal })
                 
                 $Global:highFromTop += 78
             }
@@ -101,6 +176,12 @@ function Load-GUIData {
         $Global:isLoading = $false
         Update-HighlightsTotal
         write-host "Data loaded successfully"
+    }
+    catch {
+        $Global:isLoading = $false
+        write-host "Error loading data: $($_.Exception.Message)" -ForegroundColor Red
+        [System.Windows.Forms.MessageBox]::Show("Failed to load saved data: $($_.Exception.Message)", "Load Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+    }
     }
     else {
         $Global:isLoading = $false
@@ -233,9 +314,49 @@ $BTAddHighlight.Add_Click(
         $TBCommentNew.Add_LostFocus({ Save-GUIData })
         $RandoHighlight.Controls.Add($TBCommentNew)
         
+        # Add Delete Button
+        $BTDelete = create-Button -text "X" -width 30 -height 30 -fromleft 900 -fromTop 20 -addTo $RandoHighlight
+        $BTDelete.BackColor = [System.Drawing.Color]::IndianRed
+        $BTDelete.Add_Click({
+            # Remove this highlight groupbox
+            $highlightToRemove = $this.Parent
+            $Highlights.Controls.Remove($highlightToRemove)
+            
+            # Recalculate positions and heights
+            $remainingHighlights = ($Highlights.Controls | where-object {$_.Name -eq "HIGHLIGHTElement"})
+            $newTop = 15
+            foreach($hl in $remainingHighlights) {
+                $hl.Location = New-Object System.Drawing.Point(5, $newTop)
+                $newTop += 78
+            }
+            
+            # Update container height and global offset
+            $Highlights.Height = 25 + ($remainingHighlights.Count * 78)
+            $Global:highFromTop = $newTop
+            
+            # Update display and save
+            $SummaryGUI.Update()
+            Update-HighlightsTotal
+            Save-GUIDataImmediate
+        })
+        
         # Add LostFocus to time pickers
-        ($RandoHighlight.Controls | where-object {$_.Name -like "TPStart"}).Add_LostFocus({ Save-GUIData; Update-HighlightsTotal })
-        ($RandoHighlight.Controls | where-object {$_.Name -like "TPEnd"}).Add_LostFocus({ Save-GUIData; Update-HighlightsTotal })
+        $tpStart = ($RandoHighlight.Controls | where-object {$_.Name -like "TPStart"})
+        $tpEnd = ($RandoHighlight.Controls | where-object {$_.Name -like "TPEnd"})
+        
+        # Auto-fill End time when Start is modified
+        $tpStart.Add_LostFocus({
+            $parentBox = $this.Parent
+            $startCtrl = $this
+            $endCtrl = $parentBox.Controls | where-object {$_.Name -like "TPEnd"}
+            if($endCtrl) {
+                $endCtrl.Value = $startCtrl.Value.AddSeconds(5)
+            }
+            Save-GUIData
+            Update-HighlightsTotal
+        })
+        
+        $tpEnd.Add_LostFocus({ Save-GUIData; Update-HighlightsTotal })
         
         $Global:highFromTop += 78
         $SummaryGUI.Update()
@@ -249,39 +370,64 @@ $BTNrun = create-Button -text "RUN" -width 100 -height 25 -fromleft 1015 -fromTo
 #Add RUN Function
 $BTNrun.Add_Click(
     {
-        write-host "RUN Button has been clicked"
-        $manualHighlights = @()
-        $highlightGroupBoxes = ($SummaryGUI.Controls | where-object {$_.Name -eq ("GPHighlights")}).Controls | where-object {$_.Name -eq ("HIGHLIGHTElement")}
+        try {
+            write-host "RUN Button has been clicked"
+            $manualHighlights = @()
+            $highlightGroupBoxes = ($SummaryGUI.Controls | where-object {$_.Name -eq ("GPHighlights")}).Controls | where-object {$_.Name -eq ("HIGHLIGHTElement")}
         
-        foreach($highlightBox in $highlightGroupBoxes)
-        {
-            write-host "Processing highlight groupbox..."
-            $StartTime = ($highlightBox.Controls | where-object {$_.Name -like "TPStart"}).Value
-            $EndTime = ($highlightBox.Controls | where-object {$_.Name -like "TPEnd"}).Value
-            $Comment = ($highlightBox.Controls | where-object {$_.Name -like "TBComment"}).Text
+            if($highlightGroupBoxes.Count -eq 0) {
+                [System.Windows.Forms.MessageBox]::Show("No highlights added. Please add at least one highlight.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                return
+            }
+        
+            foreach($highlightBox in $highlightGroupBoxes)
+            {
+                write-host "Processing highlight groupbox..."
+                $StartTime = ($highlightBox.Controls | where-object {$_.Name -like "TPStart"}).Value
+                $EndTime = ($highlightBox.Controls | where-object {$_.Name -like "TPEnd"}).Value
+                $Comment = ($highlightBox.Controls | where-object {$_.Name -like "TBComment"}).Text
             
-            # Convert time to seconds
-            $Start = [int]($StartTime.Hour * 3600 + $StartTime.Minute * 60 + $StartTime.Second)
-            $End = [int]($EndTime.Hour * 3600 + $EndTime.Minute * 60 + $EndTime.Second)
+                # Convert time to seconds
+                $Start = [int]($StartTime.Hour * 3600 + $StartTime.Minute * 60 + $StartTime.Second)
+                $End = [int]($EndTime.Hour * 3600 + $EndTime.Minute * 60 + $EndTime.Second)
             
-            write-host "Start: $Start seconds, End: $End seconds, Comment: $Comment"
-            $manualHighlights += [PSCustomObject]@{start=$Start; end=$End; comment=$Comment}
-        }
-        write-host "`nAll highlights collected:"
-        write-host ($manualHighlights | Format-Table | Out-String)
+                # Validate time range
+                if($End -le $Start) {
+                    [System.Windows.Forms.MessageBox]::Show("Invalid highlight: End time must be after Start time.`nStart: $Start seconds, End: $End seconds", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                    return
+                }
+            
+                write-host "Start: $Start seconds, End: $End seconds, Comment: $Comment"
+                $manualHighlights += [PSCustomObject]@{start=$Start; end=$End; comment=$Comment}
+            }
+            write-host "`nAll highlights collected:"
+            write-host ($manualHighlights | Format-Table | Out-String)
         
-        # Collect Summary Length and Summary Name
-        $SummaryLengthTime = $TPSummaryLength.Value
-        $SummaryLength = [int]($SummaryLengthTime.Hour * 3600 + $SummaryLengthTime.Minute * 60 + $SummaryLengthTime.Second)
-        $SummaryNameOnly = $TBSummaryName.Text
-        $VideoDirectory = Split-Path $VideoFile -Parent
-        $SummaryName = Join-Path $VideoDirectory ($SummaryNameOnly + ".mp4")
+            # Collect Summary Length and Summary Name
+            $SummaryLengthTime = $TPSummaryLength.Value
+            $SummaryLength = [int]($SummaryLengthTime.Hour * 3600 + $SummaryLengthTime.Minute * 60 + $SummaryLengthTime.Second)
+            $SummaryNameOnly = $TBSummaryName.Text
+            $VideoDirectory = Split-Path $VideoFile -Parent
+            $SummaryName = Join-Path $VideoDirectory ($SummaryNameOnly + ".mp4")
         
-        write-host "`nSummary Length: $SummaryLength seconds"
-        write-host "Summary Name: $SummaryName"
+            write-host "`nSummary Length: $SummaryLength seconds"
+            write-host "Summary Name: $SummaryName"
 
-        # Call aggregate-Video function with collected data
-        aggregate-Video -SourceVideoPath $VideoFile -Highlights $manualHighlights -OutputLength $SummaryLength -PartLength 4 -OutputPath $SummaryName
+            # Call aggregate-Video function with collected data
+            write-host "`nStarting video processing..."
+            $result = aggregate-Video -SourceVideoPath $VideoFile -Highlights $manualHighlights -OutputLength $SummaryLength -PartLength 4 -OutputPath $SummaryName
+            
+            if($result -eq $false) {
+                [System.Windows.Forms.MessageBox]::Show("Video processing failed. Check console for details.", "Processing Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            }
+            else {
+                [System.Windows.Forms.MessageBox]::Show("Video summary created successfully!`n`nOutput: $SummaryName", "Success", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            }
+        }
+        catch {
+            write-host "Error during video processing: $($_.Exception.Message)" -ForegroundColor Red
+            [System.Windows.Forms.MessageBox]::Show("An error occurred during video processing:`n`n$($_.Exception.Message)", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        }
     }
 )
 
