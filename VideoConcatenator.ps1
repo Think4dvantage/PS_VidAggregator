@@ -10,17 +10,12 @@ function Concatenate-Video {
     begin 
     {
         #Creating Temporary VidParts File
-        New-Item -Path $TempVidFile -Force
+        New-Item -Path $TempVidFile -Force | Out-Null
 
-        $ffmpeg = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
-        #Checking if FFMPEG is present
-        if(!(test-path $ffmpeg))
-        {
-            $ffmpegDL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-            Invoke-WebRequest -Uri $ffmpegDL -OutFile ".\ffmpeg.zip"
-            Expand-archive -Path ".\ffmpeg.zip" -DestinationPath ".\ffmpeg\"
-            remove-item -path ".\ffmpeg.zip" -Force -Recurse
-        }
+        # Ensure FFmpeg is installed and up-to-date
+        . "$PSScriptRoot\FFmpegManager.ps1"
+        $ffmpegPaths = Ensure-FFmpeg
+        $ffmpeg = $ffmpegPaths.FFmpeg
     }
     
     process 
@@ -47,7 +42,3 @@ function Concatenate-Video {
         remove-item -path $TempVidFile -Force
     }
 }
-
-$VidParts = (get-childitem "D:\Insta360Parts\VID_20231013_FullFlight*" -filter "*.mp4" | select-object -Property FullName).FullName
-$vidParts
-Concatenate-Video -VideoParts $VidParts -deleteParts $false -Output "D:\Insta360Parts\2023-10-13_FullFlight.mp4"

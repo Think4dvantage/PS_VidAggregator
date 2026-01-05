@@ -25,48 +25,16 @@ function aggregate-Video {
             return $false
         }
         
-        $ffmpeg = $PSScriptRoot + "\ffmpeg\bin\ffmpeg.exe"
-        $ffprobe = $PSScriptRoot + "\ffmpeg\bin\ffprobe.exe"
-        #Checking if FFMPEG is present
-        if(!(test-path $ffmpeg))
-        {
-            write-host "FFmpeg not found, downloading..."
-            try {
-                $ffmpegDL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
-                $zipPath = $PSScriptRoot + "\ffmpeg.zip"
-                $tempExtract = $PSScriptRoot + "\ffmpeg_temp"
-                $ffmpegDir = $PSScriptRoot + "\ffmpeg"
-                
-                # Clear ffmpeg directory if it exists (incomplete installation)
-                if(Test-Path $ffmpegDir) {
-                    write-host "Cleaning up incomplete ffmpeg installation..."
-                    Remove-Item -Path $ffmpegDir -Recurse -Force
-                }
-                
-                # Create fresh ffmpeg directory
-                New-Item -ItemType Directory -Path $ffmpegDir -Force | Out-Null
-                
-                Invoke-WebRequest -Uri $ffmpegDL -OutFile $zipPath
-                Expand-Archive -Path $zipPath -DestinationPath $tempExtract -Force
-                
-                # Move contents from the extracted subfolder to /ffmpeg, preserving structure
-                $extractedFolder = Get-ChildItem -Path $tempExtract -Directory | Select-Object -First 1
-                if($extractedFolder) {
-                    Get-ChildItem -Path $extractedFolder.FullName | ForEach-Object {
-                        Move-Item -Path $_.FullName -Destination $ffmpegDir -Force
-                    }
-                }
-                
-                # Cleanup
-                Remove-Item -Path $zipPath -Force
-                Remove-Item -Path $tempExtract -Recurse -Force
-                
-                write-host "FFmpeg downloaded and extracted successfully"
-            }
-            catch {
-                write-host "Failed to download FFmpeg: $($_.Exception.Message)" -ForegroundColor Red
-                return $false
-            }
+        # Ensure FFmpeg is installed and up-to-date
+        . "$PSScriptRoot\FFmpegManager.ps1"
+        try {
+            $ffmpegPaths = Ensure-FFmpeg
+            $ffmpeg = $ffmpegPaths.FFmpeg
+            $ffprobe = $ffmpegPaths.FFprobe
+        }
+        catch {
+            write-host "Failed to initialize FFmpeg: $($_.Exception.Message)" -ForegroundColor Red
+            return $false
         }
 
         try {

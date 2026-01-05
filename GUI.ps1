@@ -3,12 +3,71 @@
 #Getting VideoSummary Creator 
 . .\VideoSummaryCreator
 
-#File Selector
+#File Selector with multi-file support
 $FileBrowser = New-Object System.Windows.Forms.OpenFileDialog
 $FileBrowser.InitialDirectory = "D:\"
-$FileBrowser.Filter = "mp4 files (*.mp4)|*.mp4|All files (*.*)|*.*";
+$FileBrowser.Filter = "mp4 files (*.mp4)|*.mp4|All files (*.*)|*.*"
+$FileBrowser.Multiselect = $true
 $null = $FileBrowser.ShowDialog()
-$VideoFile = $FileBrowser.FileName
+
+# Check if multiple files selected
+if ($FileBrowser.FileNames.Count -gt 1) {
+    $result = [System.Windows.Forms.MessageBox]::Show(
+        "You selected $($FileBrowser.FileNames.Count) files. Do you want to concatenate them?",
+        "Multiple Files Selected",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question
+    )
+    
+    if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+        # Generate output filename by removing number suffix from first file
+        $firstFile = $FileBrowser.FileNames[0]
+        $directory = [System.IO.Path]::GetDirectoryName($firstFile)
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($firstFile)
+        
+        # Remove trailing numbers (e.g., "Date_FullFlight1" -> "Date_FullFlight")
+        $baseName = $baseName -replace '\d+$', ''
+        $outputFile = Join-Path $directory ($baseName + ".mp4")
+        
+        # Source the concatenation function
+        . "$PSScriptRoot\VideoConcatenator.ps1"
+        
+        Write-Host "Concatenating files to: $outputFile"
+        Concatenate-Video -VideoParts $FileBrowser.FileNames -deleteParts $false -Output $outputFile
+        
+        # Ask user to verify
+        $verifyResult = [System.Windows.Forms.MessageBox]::Show(
+            "Concatenation complete: $outputFile`n`nPlease check if the video is correct. Do you want to delete the original files?",
+            "Verify Concatenated Video",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Question
+        )
+        
+        if ($verifyResult -eq [System.Windows.Forms.DialogResult]::Yes) {
+            # Delete original files
+            foreach ($file in $FileBrowser.FileNames) {
+                Remove-Item -Path $file -Force
+                Write-Host "Deleted: $file"
+            }
+            Write-Host "Original files deleted. Using concatenated file: $outputFile"
+        }
+        
+        # Set VideoFile to the concatenated output
+        $VideoFile = $outputFile
+    } else {
+        # User declined concatenation, ask to select one file
+        [System.Windows.Forms.MessageBox]::Show(
+            "Please select only one file to process.",
+            "Select Single File",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        )
+        exit
+    }
+} else {
+    # Single file selected
+    $VideoFile = $FileBrowser.FileName
+}
 
 # Validate file selection
 if([string]::IsNullOrWhiteSpace($VideoFile) -or !(Test-Path $VideoFile)) {
