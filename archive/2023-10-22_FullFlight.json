@@ -1,0 +1,31 @@
+﻿{
+    "SummaryLength":  "00:01:10",
+    "Highlights":  [
+                       {
+                           "End":  "00:00:09",
+                           "Comment":  "Start auf der Breitlauenen Tom",
+                           "Start":  "00:00:00"
+                       },
+                       {
+                           "End":  "00:00:29",
+                           "Comment":  "Mein Start",
+                           "Start":  "00:00:17"
+                       },
+                       {
+                           "End":  "00:04:56",
+                           "Comment":  "SkyDiver Besuch",
+                           "Start":  "00:04:35"
+                       },
+                       {
+                           "End":  "00:11:21",
+                           "Comment":  "Meine Landung auf der Höhenmatte",
+                           "Start":  "00:11:14"
+                       },
+                       {
+                           "End":  "00:11:40",
+                           "Comment":  "Landung Tom",
+                           "Start":  "00:11:28"
+                       }
+                   ],
+    "SummaryName":  "2023-10-22_-Short"
+}
