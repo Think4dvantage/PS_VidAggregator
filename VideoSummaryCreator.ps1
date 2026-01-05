@@ -25,17 +25,43 @@ function aggregate-Video {
             return $false
         }
         
-        $ffmpeg = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
-        $ffprobe = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe"
+        $ffmpeg = $PSScriptRoot + "\ffmpeg\bin\ffmpeg.exe"
+        $ffprobe = $PSScriptRoot + "\ffmpeg\bin\ffprobe.exe"
         #Checking if FFMPEG is present
         if(!(test-path $ffmpeg))
         {
             write-host "FFmpeg not found, downloading..."
             try {
                 $ffmpegDL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
-                Invoke-WebRequest -Uri $ffmpegDL -OutFile ".\ffmpeg.zip"
-                Expand-archive -Path ".\ffmpeg.zip" -DestinationPath ".\ffmpeg\"
-                remove-item -path ".\ffmpeg.zip" -Force -Recurse
+                $zipPath = $PSScriptRoot + "\ffmpeg.zip"
+                $tempExtract = $PSScriptRoot + "\ffmpeg_temp"
+                $ffmpegDir = $PSScriptRoot + "\ffmpeg"
+                
+                # Clear ffmpeg directory if it exists (incomplete installation)
+                if(Test-Path $ffmpegDir) {
+                    write-host "Cleaning up incomplete ffmpeg installation..."
+                    Remove-Item -Path $ffmpegDir -Recurse -Force
+                }
+                
+                # Create fresh ffmpeg directory
+                New-Item -ItemType Directory -Path $ffmpegDir -Force | Out-Null
+                
+                Invoke-WebRequest -Uri $ffmpegDL -OutFile $zipPath
+                Expand-Archive -Path $zipPath -DestinationPath $tempExtract -Force
+                
+                # Move contents from the extracted subfolder to /ffmpeg, preserving structure
+                $extractedFolder = Get-ChildItem -Path $tempExtract -Directory | Select-Object -First 1
+                if($extractedFolder) {
+                    Get-ChildItem -Path $extractedFolder.FullName | ForEach-Object {
+                        Move-Item -Path $_.FullName -Destination $ffmpegDir -Force
+                    }
+                }
+                
+                # Cleanup
+                Remove-Item -Path $zipPath -Force
+                Remove-Item -Path $tempExtract -Recurse -Force
+                
+                write-host "FFmpeg downloaded and extracted successfully"
             }
             catch {
                 write-host "Failed to download FFmpeg: $($_.Exception.Message)" -ForegroundColor Red
@@ -80,7 +106,13 @@ function aggregate-Video {
         write-host ("Video Length left after Highlights: " + $LeftoverOutputLength)
         $addParts = [int]($LeftoverOutputLength / $PartLength)
         write-host ("Parts to add after Highlight:" + $addParts)
-        $Increment = [int]($SourceVideoLength / $addparts)
+        
+        # Find the last highlight end time to avoid adding parts after it
+        $Highlights = $Highlights | sort-object start
+        $lastHighlightEnd = ($Highlights | Measure-Object -Property end -Maximum).Maximum
+        write-host ("Last highlight ends at: " + $lastHighlightEnd)
+        
+        $Increment = [int]($lastHighlightEnd / $addparts)
         write-host ("Increment is: " + $Increment)
         $start = 0
         $end = 0
@@ -88,7 +120,7 @@ function aggregate-Video {
         do {
             $start = $start + $Increment
             $end = $start + $PartLength
-            if($end -ge $SourceVideoLength)
+            if($end -ge $lastHighlightEnd)
             {
                 $Highlights = $Highlights | sort-object start
                 $provLength = calc-partLength $Highlights
@@ -105,26 +137,41 @@ function aggregate-Video {
             }
             $inputPart = ([PSCustomObject]@{start=$start; end=$end})
             $Highlights = ($Highlights | sort-object start)
+            
+            # Check if the new part overlaps with any existing highlight
+            $hasOverlap = $false
             foreach ($part in $Highlights) {
-                if ($inputPart.start -ge $part.start -and $inputPart.start -le $part.end -and $inputPart.end -ge $part.start -and $inputPart.end -le $part.end) {
-                    write-host ("Input " + $InputPart + " was too close - skipping")
-                    continue
-                }
-                else {
-                    $provLength = calc-partLength $Highlights
-                    if (($OutputLength - $provLength ) -le $partLength) 
-                    {
-                        $i = 0
-                        while ($provLength -le $OutputLength) {
-                            $Highlights[$i].End = $Highlights[$i].end + 1
-                            $provLength = calc-partLength $Highlights
-                            $i++
-                        }
-                    }
+                # Check all overlap scenarios:
+                # 1. New part completely inside existing part
+                # 2. New part starts inside existing part
+                # 3. New part ends inside existing part  
+                # 4. New part completely contains existing part
+                if (($inputPart.start -ge $part.start -and $inputPart.start -le $part.end) -or
+                    ($inputPart.end -ge $part.start -and $inputPart.end -le $part.end) -or
+                    ($inputPart.start -le $part.start -and $inputPart.end -ge $part.end)) {
+                    write-host ("Input part ($($inputPart.start)-$($inputPart.end)) overlaps with existing ($($part.start)-$($part.end)) - skipping")
+                    $hasOverlap = $true
+                    break
                 }
             }
-            $Highlights += $inputPart
+            
+            # Only add the part if there's no overlap
+            if (-not $hasOverlap) {
+                $Highlights += $inputPart
+                write-host ("Added part: $($inputPart.start)-$($inputPart.end)")
+            }
+            
             $provLength = calc-partLength $Highlights
+            
+            # If we're close to the target length, extend existing parts instead of adding more
+            if (($OutputLength - $provLength) -le $partLength -and ($OutputLength - $provLength) -gt 0) {
+                $i = 0
+                while ($provLength -lt $OutputLength -and $i -lt $Highlights.Count) {
+                    $Highlights[$i].End = $Highlights[$i].end + 1
+                    $provLength = calc-partLength $Highlights
+                    $i++
+                }
+            }
         } while (
             $provLength -le $OutputLength
         )
@@ -133,9 +180,19 @@ function aggregate-Video {
     }
     
     process {
+                # Check if end screen image exists and add as input
+                $endScreenImage = $PSScriptRoot + "\resources\EndScreenBackground.JPG"
+                $hasEndScreen = Test-Path $endScreenImage
+                
+                if($hasEndScreen) {
+                    # Add end screen image as second input with audio null source
+                    $arguments = "-i " + $SourceVideoPath + " -loop 1 -framerate 29.97 -t 5 -i " + [char]34 + $endScreenImage + [char]34 + " -f lavfi -t 5 -i anullsrc=channel_layout=stereo:sample_rate=48000 -filter_complex " + [char]34
+                } else {
+                    $arguments = "-i " + $SourceVideoPath + " -filter_complex " + [char]34
+                }
+                
                 #ffmpeg.exe -i D:\Insta360Parts\20221016-Full.mp4 -filter_complex "[0]atrim=3:12,asetpts=PTS-STARTPTS[ap1],[0]trim=3:12,setpts=PTS-STARTPTS[p1],[0]atrim=600:620,asetpts=PTS-STARTPTS[ap2],[0]trim=600:620,setpts=PTS-STARTPTS[p2],[p1][ap1][p2][ap2]
                 #concat=n=2:v=1:a=1[out][aout]" -map "[out]" -map "[aout]" D:\test.mp4 -hwaccel cuda -hwaccel_output_format cuda -y
-                $arguments = "-i " + $SourceVideoPath + " -filter_complex " + [char]34
                 $cut = ""
                 $concat = ""
                 for ($i = 0; $i -lt $Highlights.Count; $i++) 
@@ -160,7 +217,18 @@ function aggregate-Video {
                     $cut += "[0]atrim=" + $Highlights[$i].start + ":" + $Highlights[$i].end + ",asetpts=PTS-STARTPTS[ap" + $i + "],[0]trim=" + $Highlights[$i].start + ":" + $Highlights[$i].end + $Comment + ",setpts=PTS-STARTPTS[p"+ $i + "],"
                     $concat += "[p" + $i +"][ap" + $i + "]"
                 }
-                $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                
+                if($hasEndScreen) {
+                    # Add end screen to filter chain with matching SAR
+                    $endScreenIndex = $Highlights.Count
+                    $cut += "[1]scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2:black,setsar=1:1," +
+                        "drawtext=text='Danke, bis bald!':fontcolor=white:fontsize=80:x=(w-tw)/2:y=(h-th)/2-40:font=Arial Black," +
+                        "drawtext=text='Like & Subscribe':fontcolor=white:fontsize=60:x=(w-tw)/2:y=(h-th)/2+60:font=Arial,format=yuv420p,setpts=PTS-STARTPTS[p" + $endScreenIndex + "],[2]asetpts=PTS-STARTPTS[ap" + $endScreenIndex + "],"
+                    $concat += "[p" + $endScreenIndex + "][ap" + $endScreenIndex + "]"
+                    $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                } else {
+                    $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                }
 
                 write-host $arguments
                 $process = start-process -FilePath $ffmpeg -ArgumentList $arguments -PassThru -wait -nonewWindow

@@ -101,91 +101,91 @@ function Load-GUIData {
                 $TBSummaryName.Text = $data.SummaryName
             }
         
-        # Load Highlights
-        if($data.Highlights -and $data.Highlights.Count -gt 0) {
-            foreach($highlight in $data.Highlights) {
-                write-host "Loading highlight: Start=$($highlight.Start), End=$($highlight.End), Comment=$($highlight.Comment)"
-                
-                # Manually create highlight groupbox (don't use PerformClick to avoid side effects)
-                $Highlights.Height = $Highlights.Height + 78
-                $RandoHighlight = create-GroupBox -Name "HIGHLIGHTElement" -Height 75 -width 950 -fromLeft 5 -fromTop $Global:highFromTop -addTo $Highlights
-                create-Label -Text "Start" -fromLeft 5 -fromTop 10 -AddTo $RandoHighlight
-                create-Timepick -Name "TPStart" -fromLeft 75 -fromTop 10 -AddTo $RandoHighlight -Text $highlight.Start
-                create-Label -Text "End" -fromLeft 200 -fromTop 10 -AddTo $RandoHighlight
-                create-Timepick -Name "TPEnd" -fromLeft 275 -fromTop 10 -AddTo $RandoHighlight -Text $highlight.End
-                create-Label -Text "Comment" -fromLeft 5 -fromTop 40 -AddTo $RandoHighlight
-                
-                $TBCommentLoad = New-Object System.Windows.Forms.TextBox
-                $TBCommentLoad.Name = "TBComment"
-                $TBCommentLoad.width = 300
-                $TBCommentLoad.MaxLength = 200
-                $TBCommentLoad.Text = $highlight.Comment
-                $TBCommentLoad.Location = New-Object System.Drawing.Point(75,40)
-                $TBCommentLoad.Add_LostFocus({ Save-GUIData })
-                $RandoHighlight.Controls.Add($TBCommentLoad)
-                
-                # Add Delete Button
-                $BTDelete = create-Button -text "X" -width 30 -height 30 -fromleft 900 -fromTop 20 -addTo $RandoHighlight
-                $BTDelete.BackColor = [System.Drawing.Color]::IndianRed
-                $BTDelete.Add_Click({
-                    # Remove this highlight groupbox
-                    $highlightToRemove = $this.Parent
-                    $Highlights.Controls.Remove($highlightToRemove)
+            # Load Highlights
+            if($data.Highlights -and $data.Highlights.Count -gt 0) {
+                foreach($highlight in $data.Highlights) {
+                    write-host "Loading highlight: Start=$($highlight.Start), End=$($highlight.End), Comment=$($highlight.Comment)"
                     
-                    # Recalculate positions and heights
-                    $remainingHighlights = ($Highlights.Controls | where-object {$_.Name -eq "HIGHLIGHTElement"})
-                    $newTop = 15
-                    foreach($hl in $remainingHighlights) {
-                        $hl.Location = New-Object System.Drawing.Point(5, $newTop)
-                        $newTop += 78
-                    }
+                    # Manually create highlight groupbox (don't use PerformClick to avoid side effects)
+                    $Highlights.Height = $Highlights.Height + 78
+                    $RandoHighlight = create-GroupBox -Name "HIGHLIGHTElement" -Height 75 -width 950 -fromLeft 5 -fromTop $Global:highFromTop -addTo $Highlights
+                    create-Label -Text "Start" -fromLeft 5 -fromTop 10 -AddTo $RandoHighlight
+                    create-Timepick -Name "TPStart" -fromLeft 75 -fromTop 10 -AddTo $RandoHighlight -Text $highlight.Start
+                    create-Label -Text "End" -fromLeft 200 -fromTop 10 -AddTo $RandoHighlight
+                    create-Timepick -Name "TPEnd" -fromLeft 275 -fromTop 10 -AddTo $RandoHighlight -Text $highlight.End
+                    create-Label -Text "Comment" -fromLeft 5 -fromTop 40 -AddTo $RandoHighlight
                     
-                    # Update container height and global offset
-                    $Highlights.Height = 25 + ($remainingHighlights.Count * 78)
-                    $Global:highFromTop = $newTop
+                    $TBCommentLoad = New-Object System.Windows.Forms.TextBox
+                    $TBCommentLoad.Name = "TBComment"
+                    $TBCommentLoad.width = 300
+                    $TBCommentLoad.MaxLength = 200
+                    $TBCommentLoad.Text = $highlight.Comment
+                    $TBCommentLoad.Location = New-Object System.Drawing.Point(75,40)
+                    $TBCommentLoad.Add_LostFocus({ Save-GUIData })
+                    $RandoHighlight.Controls.Add($TBCommentLoad)
                     
-                    # Update display and save
-                    $SummaryGUI.Update()
-                    Update-HighlightsTotal
-                    Save-GUIDataImmediate
-                })
-                
-                # Add LostFocus to time pickers
-                $tpStart = ($RandoHighlight.Controls | where-object {$_.Name -like "TPStart"})
-                $tpEnd = ($RandoHighlight.Controls | where-object {$_.Name -like "TPEnd"})
-                
-                # Auto-fill End time when Start is modified
-                $tpStart.Add_LostFocus({
-                    $parentBox = $this.Parent
-                    $startCtrl = $this
-                    $endCtrl = $parentBox.Controls | where-object {$_.Name -like "TPEnd"}
-                    if($endCtrl) {
-                        $endCtrl.Value = $startCtrl.Value.AddSeconds(5)
-                    }
-                    Save-GUIData
-                    Update-HighlightsTotal
-                })
-                
-                $tpEnd.Add_LostFocus({ Save-GUIData; Update-HighlightsTotal })
-                
-                $Global:highFromTop += 78
+                    # Add Delete Button
+                    $BTDelete = create-Button -text "X" -width 30 -height 30 -fromleft 900 -fromTop 20 -addTo $RandoHighlight
+                    $BTDelete.BackColor = [System.Drawing.Color]::IndianRed
+                    $BTDelete.Add_Click({
+                        # Remove this highlight groupbox
+                        $highlightToRemove = $this.Parent
+                        $Highlights.Controls.Remove($highlightToRemove)
+                        
+                        # Recalculate positions and heights
+                        $remainingHighlights = ($Highlights.Controls | where-object {$_.Name -eq "HIGHLIGHTElement"})
+                        $newTop = 15
+                        foreach($hl in $remainingHighlights) {
+                            $hl.Location = New-Object System.Drawing.Point(5, $newTop)
+                            $newTop += 78
+                        }
+                        
+                        # Update container height and global offset
+                        $Highlights.Height = 25 + ($remainingHighlights.Count * 78)
+                        $Global:highFromTop = $newTop
+                        
+                        # Update display and save
+                        $SummaryGUI.Update()
+                        Update-HighlightsTotal
+                        Save-GUIDataImmediate
+                    })
+                    
+                    # Add LostFocus to time pickers
+                    $tpStart = ($RandoHighlight.Controls | where-object {$_.Name -like "TPStart"})
+                    $tpEnd = ($RandoHighlight.Controls | where-object {$_.Name -like "TPEnd"})
+                    
+                    # Auto-fill End time when Start is modified
+                    $tpStart.Add_LostFocus({
+                        $parentBox = $this.Parent
+                        $startCtrl = $this
+                        $endCtrl = $parentBox.Controls | where-object {$_.Name -like "TPEnd"}
+                        if($endCtrl) {
+                            $endCtrl.Value = $startCtrl.Value.AddSeconds(5)
+                        }
+                        Save-GUIData
+                        Update-HighlightsTotal
+                    })
+                    
+                    $tpEnd.Add_LostFocus({ Save-GUIData; Update-HighlightsTotal })
+                    
+                    $Global:highFromTop += 78
+                }
+                $SummaryGUI.Update()
             }
-            $SummaryGUI.Update()
-        }
         
-        $Global:isLoading = $false
-        Update-HighlightsTotal
-        write-host "Data loaded successfully"
+            $Global:isLoading = $false
+            Update-HighlightsTotal
+            write-host "Data loaded successfully"
+        }
+        else {
+            $Global:isLoading = $false
+            write-host "No saved data found for this video"
+        }
     }
     catch {
         $Global:isLoading = $false
         write-host "Error loading data: $($_.Exception.Message)" -ForegroundColor Red
         [System.Windows.Forms.MessageBox]::Show("Failed to load saved data: $($_.Exception.Message)", "Load Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-    }
-    }
-    else {
-        $Global:isLoading = $false
-        write-host "No saved data found for this video"
     }
 }
 
