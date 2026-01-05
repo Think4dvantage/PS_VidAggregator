@@ -9,12 +9,12 @@ function aggregate-Video {
     )
     
     begin {
-        $ffmpeg = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
-        $ffprobe = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe"
+        $ffmpeg = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl-shared\bin\ffmpeg.exe"
+        $ffprobe = $PSScriptRoot + "\ffmpeg\ffmpeg-master-latest-win64-gpl-shared\bin\ffprobe.exe"
         #Checking if FFMPEG is present
         if(!(test-path $ffmpeg))
         {
-            $ffmpegDL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+            $ffmpegDL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
             Invoke-WebRequest -Uri $ffmpegDL -OutFile ".\ffmpeg.zip"
             Expand-archive -Path ".\ffmpeg.zip" -DestinationPath ".\ffmpeg\"
             remove-item -path ".\ffmpeg.zip" -Force -Recurse
@@ -112,9 +112,17 @@ function aggregate-Video {
                 for ($i = 0; $i -lt $Highlights.Count; $i++) 
                 {
                     #Adding Comment if one is Available
-                    if($Highlights[$i].Comment -ne $null)
+                    if($Highlights[$i].Comment -ne $null -and $Highlights[$i].Comment.Trim() -ne "")
                     {
-                        $Comment=",drawtext=text='" + $Highlights[$i].Comment + "':fontcolor=white:fontsize=130:x=(w-tw)/2: y=h-(2*lh):font=Arial Black"
+                        # Escape special characters for ffmpeg drawtext filter
+                        $escapedComment = $Highlights[$i].Comment
+                        # Remove or replace problematic characters
+                        $escapedComment = $escapedComment -replace ":", " -"  # Replace colon with dash
+                        $escapedComment = $escapedComment -replace "'", ""    # Remove single quotes
+                        $escapedComment = $escapedComment -replace "\\", ""   # Remove backslashes
+                        $escapedComment = $escapedComment -replace "\|", ""   # Remove pipes
+                        $escapedComment = $escapedComment -replace ";", ","   # Replace semicolons
+                        $Comment=",drawtext=text='" + $escapedComment + "':fontcolor=white:fontsize=130:x=(w-tw)/2: y=h-(2*lh):font=Arial Black"
                     }
                     else 
                     {
@@ -123,7 +131,7 @@ function aggregate-Video {
                     $cut += "[0]atrim=" + $Highlights[$i].start + ":" + $Highlights[$i].end + ",asetpts=PTS-STARTPTS[ap" + $i + "],[0]trim=" + $Highlights[$i].start + ":" + $Highlights[$i].end + $Comment + ",setpts=PTS-STARTPTS[p"+ $i + "],"
                     $concat += "[p" + $i +"][ap" + $i + "]"
                 }
-                $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " " + $OutputPath + " -y"
+                $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
 
                 write-host $arguments
                 start-process -FilePath $ffmpeg -ArgumentList $arguments -PassThru -wait -nonewWindow
@@ -248,5 +256,5 @@ function aggregate-Video {
 #$Highlights = @([PSCustomObject]@{start=0; end=9; comment="Start auf der Breitlauenen Tom"}, [PSCustomObject]@{start=17; end=29; comment="Mein Start"}, [PSCustomObject]@{start=275; end=296; comment="SkyDiver Besuch"}, [PSCustomObject]@{start=674; end=681;comment="Meine Landung auf der Höhenmatte"}, [PSCustomObject]@{start=688; end=700;comment="Landung Tom"})
 #aggregate-Video -SourceVideo "D:\Insta360Parts\2023-10-22_FullFlight.mp4" -Highlights $Highlights -OutputLength 70 -PartLength 4 -OutputPath "D:\Insta360Parts\2023-10-22_-Short.mp4"
 
-$Highlights = @([PSCustomObject]@{start=2; end=12; comment="Start direkt vor Jo Jufer"}, [PSCustomObject]@{start=588; end=602; comment="Easy Landung in Inti"}, [PSCustomObject]@{start=611; end=618;comment="Armer Kerl :-("})
-aggregate-Video -SourceVideo "D:\Insta360Parts\2023-11-23_FullFlight.mp4" -Highlights $Highlights -OutputLength 80 -PartLength 4 -OutputPath "D:\Insta360Parts\2023-11-23_-Short.mp4"
+#$Highlights = @([PSCustomObject]@{start=2; end=12; comment="Start direkt vor Jo Jufer"}, [PSCustomObject]@{start=588; end=602; comment="Easy Landung in Inti"}, [PSCustomObject]@{start=611; end=618;comment="Armer Kerl :-("})
+#aggregate-Video -SourceVideo "D:\Insta360Parts\2023-11-23_FullFlight.mp4" -Highlights $Highlights -OutputLength 80 -PartLength 4 -OutputPath "D:\Insta360Parts\2023-11-23_-Short.mp4"
