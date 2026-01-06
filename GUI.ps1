@@ -14,7 +14,7 @@ $null = $FileBrowser.ShowDialog()
 if ($FileBrowser.FileNames.Count -gt 1) {
     $result = [System.Windows.Forms.MessageBox]::Show(
         "You selected $($FileBrowser.FileNames.Count) files. Do you want to concatenate them?",
-        "Multiple Files Selected",
+        "Multiple Files Selected", 
         [System.Windows.Forms.MessageBoxButtons]::YesNo,
         [System.Windows.Forms.MessageBoxIcon]::Question
     )
