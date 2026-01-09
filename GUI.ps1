@@ -125,13 +125,25 @@ function Save-GUIDataImmediate {
             $startControl = $highlightBox.Controls | where-object {$_.Name -like "TPStart"}
             $endControl = $highlightBox.Controls | where-object {$_.Name -like "TPEnd"}
             $commentControl = $highlightBox.Controls | where-object {$_.Name -like "TBComment"}
+            $pictureControl = $highlightBox.Controls | where-object {$_.Name -like "CBPicture"}
+            $imagePathControl = $highlightBox.Controls | where-object {$_.Name -like "TBImagePath"}
+            $durationControl = $highlightBox.Controls | where-object {$_.Name -like "NBDuration"}
         
             if($startControl -and $endControl) {
-                $data.Highlights += @{
+                $highlightData = @{
                     Start = $startControl.Text
                     End = $endControl.Text
                     Comment = if($commentControl) { $commentControl.Text } else { "" }
+                    Type = if($pictureControl -and $pictureControl.Checked) { "picture" } else { "video" }
                 }
+                
+                # Add picture-specific fields if picture mode
+                if($pictureControl -and $pictureControl.Checked) {
+                    $highlightData.ImagePath = if($imagePathControl) { $imagePathControl.Text } else { "" }
+                    $highlightData.Duration = if($durationControl) { [int]$durationControl.Value } else { 5 }
+                }
+                
+                $data.Highlights += $highlightData
             }
         }
     
@@ -163,15 +175,112 @@ function Load-GUIData {
             # Load Highlights
             if($data.Highlights -and $data.Highlights.Count -gt 0) {
                 foreach($highlight in $data.Highlights) {
-                    write-host "Loading highlight: Start=$($highlight.Start), End=$($highlight.End), Comment=$($highlight.Comment)"
+                    write-host "Loading highlight: Start=$($highlight.Start), End=$($highlight.End), Comment=$($highlight.Comment), Type=$($highlight.Type)"
                     
                     # Manually create highlight groupbox (don't use PerformClick to avoid side effects)
                     $Highlights.Height = $Highlights.Height + 78
                     $RandoHighlight = create-GroupBox -Name "HIGHLIGHTElement" -Height 75 -width 950 -fromLeft 5 -fromTop $Global:highFromTop -addTo $Highlights
-                    create-Label -Text "Start" -fromLeft 5 -fromTop 10 -AddTo $RandoHighlight
+                    
+                    # Start Label (changes meaning based on Picture checkbox)
+                    $LBStart = New-Object System.Windows.Forms.Label
+                    $LBStart.Name = "LBStart"
+                    $LBStart.Text = if($isPicture) { "Insert At" } else { "Start" }
+                    $LBStart.AutoSize = $true
+                    $LBStart.Location = New-Object System.Drawing.Point(5,10)
+                    $RandoHighlight.Controls.Add($LBStart)
+                    
                     create-Timepick -Name "TPStart" -fromLeft 75 -fromTop 10 -AddTo $RandoHighlight -Text $highlight.Start
                     create-Label -Text "End" -fromLeft 200 -fromTop 10 -AddTo $RandoHighlight
                     create-Timepick -Name "TPEnd" -fromLeft 275 -fromTop 10 -AddTo $RandoHighlight -Text $highlight.End
+                    
+                    # Picture Highlight Controls
+                    $isPicture = ($highlight.Type -eq "picture")
+                    $CBPicture = New-Object System.Windows.Forms.CheckBox
+                    $CBPicture.Name = "CBPicture"
+                    $CBPicture.Text = "Picture"
+                    $CBPicture.Width = 80
+                    $CBPicture.Height = 20
+                    $CBPicture.Checked = $isPicture
+                    $CBPicture.Location = New-Object System.Drawing.Point(410,10)
+                    $CBPicture.Add_CheckedChanged({
+                        $parent = $this.Parent
+                        $isPic = $this.Checked
+                        # Update label text based on mode
+                        $startLabel = $parent.Controls | where-object {$_.Name -eq "LBStart"}
+                        if($startLabel) {
+                            $startLabel.Text = if($isPic) { "Insert At" } else { "Start" }
+                        }
+                        # Keep Start enabled for timeline position, disable only End time
+                        ($parent.Controls | where-object {$_.Name -eq "TPEnd"}).Enabled = !$isPic
+                        ($parent.Controls | where-object {$_.Name -eq "BTBrowse"}).Visible = $isPic
+                        ($parent.Controls | where-object {$_.Name -eq "TBImagePath"}).Visible = $isPic
+                        ($parent.Controls | where-object {$_.Name -eq "LBDuration"}).Visible = $isPic
+                        ($parent.Controls | where-object {$_.Name -eq "NBDuration"}).Visible = $isPic
+                        Save-GUIData
+                    })
+                    $RandoHighlight.Controls.Add($CBPicture)
+                    
+                    # Image Path
+                    $TBImagePath = New-Object System.Windows.Forms.TextBox
+                    $TBImagePath.Name = "TBImagePath"
+                    $TBImagePath.Width = 200
+                    $TBImagePath.ReadOnly = $true
+                    if($highlight.ImagePath) {
+                        $TBImagePath.Text = $highlight.ImagePath
+                    } else {
+                        $TBImagePath.Text = ""
+                    }
+                    $TBImagePath.Location = New-Object System.Drawing.Point(500,8)
+                    $TBImagePath.Add_LostFocus({ Save-GUIData })
+                    $RandoHighlight.Controls.Add($TBImagePath)
+                    $TBImagePath.Visible = $isPicture
+                    
+                    # Browse Button
+                    $BTBrowse = New-Object System.Windows.Forms.Button
+                    $BTBrowse.Name = "BTBrowse"
+                    $BTBrowse.Text = "..."
+                    $BTBrowse.Width = 30
+                    $BTBrowse.Height = 23
+                    $BTBrowse.Location = New-Object System.Drawing.Point(705,8)
+                    $BTBrowse.Visible = $isPicture
+                    $BTBrowse.Add_Click({
+                        $dialog = New-Object System.Windows.Forms.OpenFileDialog
+                        $dialog.Filter = "Image files (*.jpg;*.jpeg;*.png)|*.jpg;*.jpeg;*.png|All files (*.*)|*.*"
+                        $dialog.Title = "Select Picture for Highlight"
+                        if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                            $parent = $this.Parent
+                            ($parent.Controls | where-object {$_.Name -eq "TBImagePath"}).Text = $dialog.FileName
+                            Save-GUIData
+                        }
+                    })
+                    $RandoHighlight.Controls.Add($BTBrowse)
+                    
+                    # Duration Label
+                    $LBDuration = New-Object System.Windows.Forms.Label
+                    $LBDuration.Name = "LBDuration"
+                    $LBDuration.Text = "Duration (s)"
+                    $LBDuration.AutoSize = $true
+                    $LBDuration.Location = New-Object System.Drawing.Point(745,10)
+                    $LBDuration.Visible = $isPicture
+                    $RandoHighlight.Controls.Add($LBDuration)
+                    
+                    # Duration NumericUpDown
+                    $NBDuration = New-Object System.Windows.Forms.NumericUpDown
+                    $NBDuration.Name = "NBDuration"
+                    $NBDuration.Width = 50
+                    $NBDuration.Minimum = 1
+                    $NBDuration.Maximum = 30
+                    $NBDuration.Value = if($highlight.Duration) { $highlight.Duration } else { 5 }
+                    $NBDuration.Location = New-Object System.Drawing.Point(830,8)
+                    $NBDuration.Visible = $isPicture
+                    $NBDuration.Add_ValueChanged({ Save-GUIData })
+                    $RandoHighlight.Controls.Add($NBDuration)
+                    
+                    # Disable End time picker if picture mode (Start is used for timeline position)
+                    if($isPicture) {
+                        ($RandoHighlight.Controls | where-object {$_.Name -eq "TPEnd"}).Enabled = $false
+                    }
+                    
                     create-Label -Text "Comment" -fromLeft 5 -fromTop 40 -AddTo $RandoHighlight
                     
                     $TBCommentLoad = New-Object System.Windows.Forms.TextBox
@@ -360,10 +469,95 @@ $BTAddHighlight.Add_Click(
         write-host "HighlightAdd Button has been clicked"
         $Highlights.Height = $Highlights.Height + 78
         $RandoHighlight = create-GroupBox -Name "HIGHLIGHTElement" -Height 75 -width 950 -fromLeft 5 -fromTop $highFromTop -addTo $Highlights
-        create-Label -Text "Start" -fromLeft 5 -fromTop 10 -AddTo $RandoHighlight
+        
+        # Start Label (changes meaning based on Picture checkbox)
+        $LBStart = New-Object System.Windows.Forms.Label
+        $LBStart.Name = "LBStart"
+        $LBStart.Text = "Start"
+        $LBStart.AutoSize = $true
+        $LBStart.Location = New-Object System.Drawing.Point(5,10)
+        $RandoHighlight.Controls.Add($LBStart)
+        
         create-Timepick -Name "TPStart" -fromLeft 75 -fromTop 10 -AddTo  $RandoHighlight -Text "00:00:00"
         create-Label -Text "End" -fromLeft 200 -fromTop 10 -AddTo $RandoHighlight
         create-Timepick -Name "TPEnd" -fromLeft 275 -fromTop 10 -AddTo  $RandoHighlight -Text "00:00:00"
+        
+        # Picture Highlight Controls
+        $CBPicture = New-Object System.Windows.Forms.CheckBox
+        $CBPicture.Name = "CBPicture"
+        $CBPicture.Text = "Picture"
+        $CBPicture.Width = 80
+        $CBPicture.Height = 20
+        $CBPicture.Location = New-Object System.Drawing.Point(410,10)
+        $CBPicture.Add_CheckedChanged({
+            $parent = $this.Parent
+            $isPicture = $this.Checked
+            # Update label text based on mode
+            $startLabel = $parent.Controls | where-object {$_.Name -eq "LBStart"}
+            if($startLabel) {
+                $startLabel.Text = if($isPicture) { "Insert At" } else { "Start" }
+            }
+            # Keep Start enabled for timeline position, disable only End time
+            ($parent.Controls | where-object {$_.Name -eq "TPEnd"}).Enabled = !$isPicture
+            ($parent.Controls | where-object {$_.Name -eq "BTBrowse"}).Visible = $isPicture
+            ($parent.Controls | where-object {$_.Name -eq "TBImagePath"}).Visible = $isPicture
+            ($parent.Controls | where-object {$_.Name -eq "LBDuration"}).Visible = $isPicture
+            ($parent.Controls | where-object {$_.Name -eq "NBDuration"}).Visible = $isPicture
+            Save-GUIData
+        })
+        $RandoHighlight.Controls.Add($CBPicture)
+        
+        # Image Path (hidden by default)
+        $TBImagePath = New-Object System.Windows.Forms.TextBox
+        $TBImagePath.Name = "TBImagePath"
+        $TBImagePath.Width = 200
+        $TBImagePath.ReadOnly = $true
+        $TBImagePath.Location = New-Object System.Drawing.Point(500,8)
+        $TBImagePath.Visible = $false
+        $TBImagePath.Add_LostFocus({ Save-GUIData })
+        $RandoHighlight.Controls.Add($TBImagePath)
+        
+        # Browse Button (hidden by default)
+        $BTBrowse = New-Object System.Windows.Forms.Button
+        $BTBrowse.Name = "BTBrowse"
+        $BTBrowse.Text = "..."
+        $BTBrowse.Width = 30
+        $BTBrowse.Height = 23
+        $BTBrowse.Location = New-Object System.Drawing.Point(705,8)
+        $BTBrowse.Visible = $false
+        $BTBrowse.Add_Click({
+            $dialog = New-Object System.Windows.Forms.OpenFileDialog
+            $dialog.Filter = "Image files (*.jpg;*.jpeg;*.png)|*.jpg;*.jpeg;*.png|All files (*.*)|*.*"
+            $dialog.Title = "Select Picture for Highlight"
+            if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                $parent = $this.Parent
+                ($parent.Controls | where-object {$_.Name -eq "TBImagePath"}).Text = $dialog.FileName
+                Save-GUIData
+            }
+        })
+        $RandoHighlight.Controls.Add($BTBrowse)
+        
+        # Duration Label (hidden by default)
+        $LBDuration = New-Object System.Windows.Forms.Label
+        $LBDuration.Name = "LBDuration"
+        $LBDuration.Text = "Duration (s)"
+        $LBDuration.AutoSize = $true
+        $LBDuration.Location = New-Object System.Drawing.Point(745,10)
+        $LBDuration.Visible = $false
+        $RandoHighlight.Controls.Add($LBDuration)
+        
+        # Duration NumericUpDown (hidden by default)
+        $NBDuration = New-Object System.Windows.Forms.NumericUpDown
+        $NBDuration.Name = "NBDuration"
+        $NBDuration.Width = 50
+        $NBDuration.Minimum = 1
+        $NBDuration.Maximum = 30
+        $NBDuration.Value = 5
+        $NBDuration.Location = New-Object System.Drawing.Point(830,8)
+        $NBDuration.Visible = $false
+        $NBDuration.Add_ValueChanged({ Save-GUIData })
+        $RandoHighlight.Controls.Add($NBDuration)
+        
         create-Label -Text "Comment" -fromLeft 5 -fromTop 40 -AddTo $RandoHighlight
         $TBCommentNew = New-Object System.Windows.Forms.TextBox
         $TBCommentNew.Name = "TBComment"
@@ -441,23 +635,70 @@ $BTNrun.Add_Click(
         
             foreach($highlightBox in $highlightGroupBoxes)
             {
-                write-host "Processing highlight groupbox..."
+                write-host "`n=== Processing highlight groupbox ===" -ForegroundColor Cyan
+                
+                # Debug: Show all controls in this groupbox
+                write-host "Controls in groupbox:" -ForegroundColor Gray
+                foreach($ctrl in $highlightBox.Controls) {
+                    write-host "  - Name: $($ctrl.Name), Type: $($ctrl.GetType().Name), Text/Value: $($ctrl.Text)" -ForegroundColor Gray
+                }
+                
                 $StartTime = ($highlightBox.Controls | where-object {$_.Name -like "TPStart"}).Value
                 $EndTime = ($highlightBox.Controls | where-object {$_.Name -like "TPEnd"}).Value
                 $Comment = ($highlightBox.Controls | where-object {$_.Name -like "TBComment"}).Text
+                $IsPicture = ($highlightBox.Controls | where-object {$_.Name -like "CBPicture"}).Checked
+                $ImagePathControl = ($highlightBox.Controls | where-object {$_.Name -like "TBImagePath"})
+                $ImagePath = if($ImagePathControl) { $ImagePathControl.Text } else { "" }
+                $Duration = ($highlightBox.Controls | where-object {$_.Name -like "NBDuration"}).Value
             
-                # Convert time to seconds
-                $Start = [int]($StartTime.Hour * 3600 + $StartTime.Minute * 60 + $StartTime.Second)
-                $End = [int]($EndTime.Hour * 3600 + $EndTime.Minute * 60 + $EndTime.Second)
-            
-                # Validate time range
-                if($End -le $Start) {
-                    [System.Windows.Forms.MessageBox]::Show("Invalid highlight: End time must be after Start time.`nStart: $Start seconds, End: $End seconds", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-                    return
+                write-host "Extracted values:" -ForegroundColor Yellow
+                write-host "  IsPicture: $IsPicture" -ForegroundColor Yellow
+                write-host "  ImagePath: '$ImagePath'" -ForegroundColor Yellow
+                write-host "  ImagePathControl found: $($ImagePathControl -ne $null)" -ForegroundColor Yellow
+                if($ImagePath) {
+                    write-host "  PathExists: $(Test-Path $ImagePath)" -ForegroundColor Yellow
                 }
             
-                write-host "Start: $Start seconds, End: $End seconds, Comment: $Comment"
-                $manualHighlights += [PSCustomObject]@{start=$Start; end=$End; comment=$Comment}
+                if($IsPicture) {
+                    # Picture highlight validation
+                    if([string]::IsNullOrWhiteSpace($ImagePath)) {
+                        write-host "Skipping picture highlight with no image path" -ForegroundColor Yellow
+                        continue
+                    }
+                    if(!(Test-Path $ImagePath)) {
+                        write-host "VALIDATION FAILED - Image file doesn't exist: $ImagePath" -ForegroundColor Red
+                        [System.Windows.Forms.MessageBox]::Show("Picture highlight image not found:`n$ImagePath`n`nPlease select a valid image or delete this highlight.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                        return
+                    }
+                    
+                    # Use Start time as insertion point in timeline
+                    $InsertAt = [int]($StartTime.Hour * 3600 + $StartTime.Minute * 60 + $StartTime.Second)
+                    
+                    write-host "Picture highlight: $ImagePath at $InsertAt seconds, Duration: $Duration seconds, Comment: $Comment"
+                    $manualHighlights += [PSCustomObject]@{
+                        type = "picture"
+                        imagePath = $ImagePath
+                        duration = [int]$Duration
+                        comment = $Comment
+                        start = $InsertAt  # Timeline position for sorting
+                        end = $InsertAt + [int]$Duration  # For sorting and display
+                    }
+                }
+                else {
+                    # Video highlight validation
+                    # Convert time to seconds
+                    $Start = [int]($StartTime.Hour * 3600 + $StartTime.Minute * 60 + $StartTime.Second)
+                    $End = [int]($EndTime.Hour * 3600 + $EndTime.Minute * 60 + $EndTime.Second)
+                
+                    # Validate time range
+                    if($End -le $Start) {
+                        [System.Windows.Forms.MessageBox]::Show("Invalid highlight: End time must be after Start time.`nStart: $Start seconds, End: $End seconds", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                        return
+                    }
+                
+                    write-host "Video highlight: Start: $Start seconds, End: $End seconds, Comment: $Comment"
+                    $manualHighlights += [PSCustomObject]@{type="video"; start=$Start; end=$End; comment=$Comment}
+                }
             }
             write-host "`nAll highlights collected:"
             write-host ($manualHighlights | Format-Table | Out-String)

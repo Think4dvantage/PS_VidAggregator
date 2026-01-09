@@ -1,0 +1,391 @@
+# PSVA - PowerShell Video Aggregator
+
+## Project Overview
+PSVA (PowerShell Video Aggregator) is a Windows-based video editing tool that creates highlight summaries from longer videos. Originally designed for paragliding flight videos but applicable to any long-form video content where users want to create condensed highlight reels.
+
+**License**: Open Source - free for anyone to use and modify
+**Primary Use Case**: Record long videos → Mark highlights → Generate automated summary video
+**Current Focus**: Paragliding flight videos (Insta360 X2 footage)
+
+## Technical Stack & Requirements
+- **Language**: PowerShell (Version 3.0 - 6.x, NOT PowerShell 7+)
+- **OS**: Windows only (uses Windows Forms GUI)
+- **Dependencies**: 
+  - FFmpeg (auto-downloaded and managed via FFmpegManager.ps1)
+  - .NET Framework / Windows Forms
+  - Optional: NVIDIA GPU for hardware encoding (h264_nvenc, CUDA acceleration)
+  - Fallback to CPU encoding should be implemented if GPU unavailable
+
+## Installation
+1. Clone the repository
+2. Run `GUI.ps1` - FFmpeg will auto-download on first run
+3. Select video file and start marking highlights
+
+## Typical Workflow
+1. **Record**: Capture video with Insta360 X2 (or any camera)
+2. **Reframe**: Process in Insta360 Studio and export as MP4
+3. **Mark Highlights**: Watch video in VLC, mark timestamps in GUI
+4. **Generate Summary**: Tool creates condensed video with highlights
+5. **Upload**: Post summary and full video to YouTube
+
+## Project Architecture
+
+### File Structure
+```
+PS_VidAggregator/
+├── GUI.ps1                    # Main entry point - launches GUI
+├── lib.ps1                    # Windows Forms helper functions
+├── FFmpegManager.ps1          # FFmpeg download/update manager
+├── FFMPEGPSCommands.ps1       # Reference FFmpeg commands (examples)
+├── VideoSummaryCreator.ps1    # Core video processing logic
+├── VideoConcatenator.ps1      # Video concatenation functionality
+├── RandomVideoSelector.ps1    # Helper for random video selection
+├── ShortsShortener.ps1        # Tool for splitting long shorts
+├── archive/                   # JSON files with saved highlight data
+│   └── {VideoName}.json       # Per-video highlight persistence
+├── ffmpeg/                    # FFmpeg binaries (auto-managed)
+│   ├── bin/
+│   ├── .version.txt          # Download date tracking for updates
+│   └── ...
+└── resources/
+    └── EndScreenBackground.JPG # Outro image (user on paraglider wing)
+```
+
+### Core Components
+
+#### 1. GUI.ps1 - Main Application
+- **Entry Point**: Launches file browser for video selection
+- **Multi-file Support**: Detects multiple files, offers concatenation via VideoConcatenator.ps1
+- **Archive System**: Auto-saves/loads highlight data to `archive/{videoname}.json`
+- **Debounced Saving**: 2-second timer prevents excessive file writes
+- **Windows Forms Controls**:
+  - Summary Length picker (DateTimePicker for time input)
+  - Summary Name textbox
+  - Highlights container (dynamic groupboxes)
+  - Add/Delete highlight buttons
+  - RUN button to process video
+
+**Key Functions**:
+- `Save-GUIData()`: Debounced save (2s delay)
+- `Save-GUIDataImmediate()`: Immediate save for critical operations
+- `Load-GUIData()`: Restores previous session from JSON
+- `Update-HighlightsTotal()`: Calculates total highlight duration, auto-adjusts summary length if highlights exceed 70%
+
+#### 2. VideoSummaryCreator.ps1 - Core Video Processing
+**Main Function**: `aggregate-Video`
+
+**Parameters**:
+- `$SourceVideoPath`: Full path to source video
+- `$Highlights`: Array of PSCustomObject with {start, end, comment}
+- `$OutputLength`: Total desired output length in seconds
+- `$PartLength`: Length of auto-generated filler parts (default 4s)
+- `$OutputPath`: Output file path
+
+**Algorithm**:
+1. Validate highlights (no overlaps, within video bounds)
+2. Calculate remaining time after manual highlights
+3. Auto-generate filler clips distributed across video timeline
+4. Avoid overlaps between manual highlights and auto-generated parts
+5. Build complex FFmpeg filter chain for trimming/concatenation
+6. Optionally add end screen (5s) with "Like & Subscribe" overlay
+7. Use NVIDIA GPU encoding if available: `h264_nvenc -preset p4 -b:v 20M`
+
+**FFmpeg Filter Pattern**:
+```
+[0]atrim=START:END,asetpts=PTS-STARTPTS[ap0],
+[0]trim=START:END,drawtext=COMMENT,setpts=PTS-STARTPTS[p0],
+... (repeat for each highlight) ...
+[p0][ap0][p1][ap1]...concat=n=X:v=1:a=1[out][aout]
+```
+
+**Comment Overlay**: Uses FFmpeg `drawtext` filter
+- Font: Arial Black, white, 130px
+- Position: Bottom center
+- Escapes special characters (: → -, remove quotes/backslashes)
+
+#### 3. FFmpegManager.ps1 - Dependency Management
+**Function**: `Ensure-FFmpeg`
+
+**Features**:
+- Auto-downloads FFmpeg from GitHub (BtbN/FFmpeg-Builds)
+- Checks version age (prompts update if >30 days old)
+- Stores download date in `.version.txt`
+- Returns paths: `@{FFmpeg, FFprobe, Directory}`
+- Uses TLS 1.2 for HTTPS downloads
+
+**Update Logic**:
+- Compares local download date with GitHub release date
+- Only updates if newer version published
+- Preserves existing installation if up-to-date
+
+#### 4. VideoConcatenator.ps1
+**Function**: `Concatenate-Video`
+
+**Use Case**: Merge multiple video files (e.g., split recordings)
+- Creates temporary concat text file
+- Uses FFmpeg: `ffmpeg -f concat -safe 0 -i parts.txt -c copy output.mp4`
+- Optional: Delete source files after successful concatenation
+- Validates output file size (>2000 bytes) before cleanup
+
+#### 5. lib.ps1 - GUI Helper Library
+Windows Forms control factory functions:
+- `create-Label()`: Text labels
+- `create-Button()`: Buttons with size/position
+- `create-Checkbox()`: Checkboxes
+- `create-Timepick()`: DateTimePicker for time input (HH:MM:SS)
+- `create-NumUpDown()`: Numeric up/down controls
+- `create-GroupBox()`: Container groupboxes
+- `create-TextBox()`: Text input fields
+
+All functions follow pattern: `create-ControlType -Name -fromLeft -fromTop -AddTo`
+
+## Data Persistence
+
+### JSON Archive Format
+Located in `archive/{VideoName}.json`:
+```json
+{
+    "SummaryLength": "00:03:20",
+    "SummaryName": "20260104_Summary",
+    "Highlights": [
+        {
+            "Start": "00:00:00",
+            "End": "00:00:13",
+            "Comment": "Start Woody"
+        },
+        {
+            "Start": "00:00:23",
+            "End": "00:00:35",
+            "Comment": "Start Päsci"
+        }
+    ]
+}
+```
+
+**Auto-save Triggers**:
+- Control LostFocus events
+- Adding/deleting highlights
+- Debounced (2s) for text inputs
+- Immediate for deletions
+
+## Code Patterns & Conventions
+
+### PowerShell Style
+- Functions use Verb-Noun naming: `aggregate-Video`, `Concatenate-Video`
+- CmdletBinding for advanced functions
+- param blocks with type hints: `[string]$Path`, `[array]$Highlights`
+- Error handling with try/catch and return $false on failure
+- Console output: `write-host` with `-ForegroundColor` for status
+
+### GUI Event Handling
+```powershell
+$Control.Add_Click({ 
+    # Event handler logic
+    Save-GUIData  # Debounced save
+})
+
+$Control.Add_LostFocus({ 
+    Save-GUIData  # Trigger save when focus lost
+})
+```
+
+### Global Variables
+- `$Global:archiveDir`: Archive folder path
+- `$Global:videoIdentifier`: Current video filename without extension
+- `$Global:archiveFile`: Current JSON save file path
+- `$Global:isLoading`: Flag to prevent saves during load operations
+- `$Global:saveTimer`: Debounce timer for saves
+- `$Global:highFromTop`: Y-offset for next highlight groupbox
+
+### FFmpeg Process Pattern
+```powershell
+start-process -FilePath $ffmpeg `
+    -ArgumentList $arguments `
+    -PassThru -Wait -NoNewWindow
+
+# Check exit code
+if($process.ExitCode -ne 0) {
+    write-host "Error" -ForegroundColor Red
+    return $false
+}
+```
+
+## Current Known Issues & Limitations
+
+### Limitations
+1. **PowerShell 7 Incompatibility**: Windows Forms behavior differs in PS7
+2. **MP4 Only**: Current implementation assumes MP4 input/output
+3. **Windows Only**: Uses Windows Forms, not cross-platform
+4. **No CPU Fallback**: Currently hardcoded to NVIDIA GPU encoding (h264_nvenc)
+5. **Single Video Processing**: No batch mode
+6. **Fixed End Screen**: Hardcoded to 5 seconds
+
+### Areas Needing Improvement
+1. **GPU Detection**: Should detect GPU availability and fallback to CPU encoding
+2. **Error Messages**: Many errors only go to console, not GUI dialogs
+3. **Validation**: Limited input validation for time ranges
+4. **Progress Feedback**: No progress bar during video processing
+5. **Encoding Profiles**: Hardcoded encoding settings (20M bitrate, preset p4)
+
+## Future Roadmap
+
+### Planned Features
+1. **Picture Highlights** (Next Priority)
+   - Insert still images as highlight sections
+   - Support for photos overlaid on video timeline
+   - Configurable display duration
+
+2. **Background Music** (Following Feature)
+   - Add soundtrack to summary videos
+   - Volume mixing with original audio
+   - Music library management
+
+3. **GPU Fallback** (Should be implemented)
+   - Detect NVIDIA GPU availability
+   - Fallback to CPU encoding: `-c:v libx264 -preset medium`
+   - User preference for encoder selection
+
+### Potential Enhancements
+- Support for other video formats (AVI, MOV, MKV)
+- Batch processing multiple videos
+- Configurable encoding profiles (quality presets)
+- Progress bar with time remaining
+- Preview window for highlights
+- Keyboard shortcuts for marking timestamps
+- Export/import highlight templates
+- Video trimming tool
+- Audio normalization
+- Transition effects between highlights
+
+## AI Assistant Guidelines
+
+### When Making Changes
+1. **Preserve Windows Forms patterns** - Use existing helper functions from lib.ps1
+2. **Maintain data persistence** - Update both GUI and JSON save logic
+3. **Test save/load cycles** - Ensure $Global:isLoading flag prevents corruption
+4. **FFmpeg commands** - Always use -y flag for overwrite, validate exit codes
+5. **User feedback** - Show MessageBox for errors, write-host for progress
+6. **Debounced saves** - Use Save-GUIData for user input, Save-GUIDataImmediate for critical operations
+
+### When Adding Features
+1. **Follow PowerShell conventions** - Verb-Noun functions, [CmdletBinding()]
+2. **Use FFmpegManager** - Always call Ensure-FFmpeg before using FFmpeg
+3. **Update JSON schema** - Add new fields to archive format if needed
+4. **GUI layout** - Use create-* functions, maintain consistent spacing
+5. **Error handling** - Return $false on failure, show user-friendly messages
+
+### When Debugging
+1. **Check console output** - Many debug messages use write-host
+2. **Verify FFmpeg commands** - Commands are printed before execution
+3. **Check JSON files** - Archive files show exact saved state
+4. **Test with/without GPU** - NVIDIA encoding may fail on non-NVIDIA systems
+5. **PowerShell version** - Ensure running in PowerShell 5.1, not 7+
+
+### Code Quality Standards
+- **No hardcoded paths** - Use $PSScriptRoot for relative paths
+- **Validate user input** - Check time ranges, file existence
+- **Clean up temporary files** - Always remove temp files in process end
+- **User confirmation** - Ask before destructive operations (file deletion)
+- **Consistent indentation** - Use 4 spaces (PowerShell standard)
+
+## FFmpeg Command Reference
+
+### Get Video Duration
+```powershell
+ffprobe -v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 video.mp4
+```
+
+### Concatenate Videos (Copy codec)
+```powershell
+ffmpeg -f concat -safe 0 -i filelist.txt -c copy output.mp4 -y
+```
+
+### Complex Filter (Trim & Concat)
+```powershell
+ffmpeg -i input.mp4 -filter_complex "[0]atrim=3:12,asetpts=PTS-STARTPTS[ap1],[0]trim=3:12,setpts=PTS-STARTPTS[p1],[p1][ap1]concat=n=1:v=1:a=1[out][aout]" -map "[out]" -map "[aout]" output.mp4 -y
+```
+
+### GPU Encoding (NVIDIA)
+```powershell
+-c:v h264_nvenc -preset p4 -b:v 20M -hwaccel cuda -hwaccel_output_format cuda
+```
+
+### CPU Encoding (Fallback)
+```powershell
+-c:v libx264 -preset medium -pix_fmt yuv420p -b:v 4000k
+```
+
+## Testing Checklist
+When modifying the codebase, test:
+- [ ] Single video selection works
+- [ ] Multi-video concatenation prompts correctly
+- [ ] Highlights save automatically (check archive/ folder)
+- [ ] Highlights load on reopening same video
+- [ ] Summary length auto-adjusts when highlights exceed 70%
+- [ ] RUN button generates video successfully
+- [ ] End screen appears (if EndScreenBackground.JPG exists)
+- [ ] Comments appear on video as text overlays
+- [ ] Delete button removes highlights and re-saves
+- [ ] FFmpeg auto-downloads on first run
+- [ ] Video output is playable and correct duration
+
+## Common User Scenarios
+
+### Scenario 1: First Time User
+1. Clone repo and run GUI.ps1
+2. FFmpeg downloads automatically (~100MB)
+3. Select video file
+4. Click + button to add highlights
+5. Set start time, end time auto-fills (+5s)
+6. Add comment for overlay text
+7. Click RUN to generate summary
+
+### Scenario 2: Resume Previous Session
+1. Run GUI.ps1
+2. Select same video file
+3. GUI auto-loads highlights from archive/{video}.json
+4. Modify highlights or add new ones
+5. Click RUN to regenerate
+
+### Scenario 3: Concatenate Split Videos
+1. Run GUI.ps1
+2. Select multiple video files (Ctrl+Click)
+3. Dialog asks to concatenate
+4. Tool merges files (fast, copy codec)
+5. Asks to delete originals after verification
+6. Proceeds with merged video
+
+## Variable Naming Conventions
+- `$TP*` - TimePicker controls
+- `$TB*` - TextBox controls
+- `$BT*` - Button controls
+- `$LB*` - Label controls
+- `$GP*` - GroupBox containers
+- `$NB*` - NumericUpDown controls
+- `$CB*` - Checkbox controls
+
+## Key Insight: 70% Rule
+The tool maintains a 70% rule: manual highlights can occupy up to 70% of the target summary length. The remaining 30% is auto-filled with distributed clips from the full video. If highlights exceed 70%, the summary length auto-extends.
+
+This creates a balanced mix of user-selected highlights and algorithm-chosen filler content for smooth pacing.
+
+## Resources Folder
+Currently contains:
+- **EndScreenBackground.JPG**: Outro image showing user on paraglider wing in blue sky
+  - Used for 5-second end screen
+  - Overlaid with "Danke, bis bald!" and "Like & Subscribe" text
+  - Scaled to 3840x2160, centered with black padding
+
+Future: Will contain background music files and additional image assets for picture highlights feature.
+
+## Example Use Cases Beyond Paragliding
+While designed for paragliding videos, PSVA is useful for:
+- **Sports Events**: Create highlight reels from full game recordings
+- **Conferences**: Extract key moments from long presentations
+- **Tutorials**: Condense lengthy instructional videos
+- **Vlogs**: Generate "best of" compilations
+- **Surveillance**: Extract relevant incidents from security footage
+- **Dashcam**: Create incident compilations from hours of driving
+- **Gaming**: Compile best moments from long streaming sessions
+
+The universal need: Turn long videos into engaging short summaries while preserving key moments.
