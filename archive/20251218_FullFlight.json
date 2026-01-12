@@ -1,5 +1,4 @@
 ﻿{
-    "SummaryLength":  "00:02:53",
     "Highlights":  [
                        {
                            "End":  "00:00:14",
@@ -128,5 +127,11 @@
                            "End":  "00:00:09"
                        }
                    ],
+    "SummaryLength":  "00:02:53",
+    "BackgroundMusic":  {
+                            "OverlayPercentage":  "40%",
+                            "FilePath":  "",
+                            "Enabled":  true
+                        },
     "SummaryName":  "20251218_Summary"
 }

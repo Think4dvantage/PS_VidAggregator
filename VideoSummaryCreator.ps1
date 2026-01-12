@@ -5,7 +5,8 @@ function aggregate-Video {
         [array]$Highlights,
         [int]$OutputLength,
         [int]$PartLength,
-        [string]$OutputPath 
+        [string]$OutputPath,
+        [hashtable]$BackgroundMusic = $null
     )
     
     begin {
@@ -234,11 +235,20 @@ function aggregate-Video {
                 $endScreenImage = $PSScriptRoot + "\resources\EndScreenBackground.JPG"
                 $hasEndScreen = Test-Path $endScreenImage
                 
+                $musicInputIndex = -1
                 if($hasEndScreen) {
                     # Add end screen image as input with audio null source
                     $arguments += "-loop 1 -framerate 29.97 -t 5 -i " + [char]34 + $endScreenImage + [char]34 + " -f lavfi -t 5 -i anullsrc=channel_layout=stereo:sample_rate=48000 "
                     $endScreenInputIndex = $inputIndex
                     $endScreenAudioIndex = $inputIndex + 1
+                    $inputIndex += 2
+                }
+                
+                # Add background music if enabled
+                if($BackgroundMusic -ne $null -and (Test-Path $BackgroundMusic.FilePath)) {
+                    $arguments += "-stream_loop -1 -i " + [char]34 + $BackgroundMusic.FilePath + [char]34 + " "
+                    $musicInputIndex = $inputIndex
+                    write-host "Background music added as input index: $musicInputIndex"
                 }
                 
                 $arguments += "-filter_complex " + [char]34
@@ -318,9 +328,26 @@ function aggregate-Video {
                         "drawtext=text='Danke, bis bald!':fontcolor=white:fontsize=80:x=(w-tw)/2:y=(h-th)/2-40:font=Arial Black," +
                         "drawtext=text='Like & Subscribe':fontcolor=white:fontsize=60:x=(w-tw)/2:y=(h-th)/2+60:font=Arial,format=yuv420p,setpts=PTS-STARTPTS[p" + $endScreenIndex + "],[$endScreenAudioIndex]asetpts=PTS-STARTPTS[ap" + $endScreenIndex + "],"
                     $concat += "[p" + $endScreenIndex + "][ap" + $endScreenIndex + "]"
-                    $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                    
+                    if($musicInputIndex -ge 0) {
+                        # Mix background music with video audio using overlay percentages
+                        # MusicVolume = overlay percentage (e.g., 0.4 for 40% music)
+                        # OriginalVolume = 1 - overlay percentage (e.g., 0.6 for 60% original)
+                        $musicVol = $BackgroundMusic.MusicVolume
+                        $origVol = $BackgroundMusic.OriginalVolume
+                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout];[aout]volume=" + $origVol + "[orig];[$musicInputIndex]volume=" + $musicVol + "[music];[orig][music]amix=inputs=2:duration=first:dropout_transition=2[finalout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[finalout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                    } else {
+                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                    }
                 } else {
-                    $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                    if($musicInputIndex -ge 0) {
+                        # Mix background music with video audio using overlay percentages
+                        $musicVol = $BackgroundMusic.MusicVolume
+                        $origVol = $BackgroundMusic.OriginalVolume
+                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout];[aout]volume=" + $origVol + "[orig];[$musicInputIndex]volume=" + $musicVol + "[music];[orig][music]amix=inputs=2:duration=first:dropout_transition=2[finalout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[finalout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                    } else {
+                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                    }
                 }
 
                 write-host $arguments
