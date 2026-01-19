@@ -21,7 +21,7 @@ function Add-MusicToVideo {
         }
         
         # Ensure FFmpeg is installed
-        . "$PSScriptRoot\FFmpegManager.ps1"
+        . "$PSScriptRoot\PrereqManager.ps1"
         try {
             $ffmpegPaths = Ensure-FFmpeg
             $ffmpeg = $ffmpegPaths.FFmpeg
@@ -65,16 +65,16 @@ function Add-MusicToVideo {
             write-host "  Output: $OutputPath" -ForegroundColor Gray
             
             # Build FFmpeg command
-            # -i video -stream_loop -1 -i music
-            # -filter_complex "[0:a]volume=0.6[orig];[1:a]volume=0.4[music];[orig][music]amix=inputs=2:duration=first[aout]"
-            # -map 0:v -map [aout] -c:v copy -c:a aac -b:a 192k output.mp4
+            # Normalize both audio streams to same loudness level (EBU R128 standard), then mix
+            # This ensures predictable mixing regardless of how loud the source files are
+            # -filter_complex "[0:a]loudnorm,volume=1.0[orig];[1:a]loudnorm,volume=0.2[music];[orig][music]amix"
             
             $arguments = "-i " + [char]34 + $VideoPath + [char]34 + " "
             $arguments += "-stream_loop -1 -i " + [char]34 + $MusicPath + [char]34 + " "
             $arguments += "-filter_complex " + [char]34
-            $arguments += "[0:a]volume=$OriginalVolume[orig];"
-            $arguments += "[1:a]volume=$MusicVolume[music];"
-            $arguments += "[orig][music]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+            $arguments += "[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,volume=$OriginalVolume[orig];"
+            $arguments += "[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,volume=$MusicVolume[music];"
+            $arguments += "[orig][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]"
             $arguments += [char]34 + " "
             $arguments += "-map 0:v -map " + [char]34 + "[aout]" + [char]34 + " "
             $arguments += "-c:v copy -c:a aac -b:a 192k "

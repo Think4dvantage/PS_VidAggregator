@@ -13,7 +13,7 @@ function Concatenate-Video {
         New-Item -Path $TempVidFile -Force | Out-Null
 
         # Ensure FFmpeg is installed and up-to-date
-        . "$PSScriptRoot\FFmpegManager.ps1"
+        . "$PSScriptRoot\PrereqManager.ps1"
         $ffmpegPaths = Ensure-FFmpeg
         $ffmpeg = $ffmpegPaths.FFmpeg
     }

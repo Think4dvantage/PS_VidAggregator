@@ -27,7 +27,7 @@ function aggregate-Video {
         }
         
         # Ensure FFmpeg is installed and up-to-date
-        . "$PSScriptRoot\FFmpegManager.ps1"
+        . "$PSScriptRoot\PrereqManager.ps1"
         try {
             $ffmpegPaths = Ensure-FFmpeg
             $ffmpeg = $ffmpegPaths.FFmpeg
@@ -38,8 +38,31 @@ function aggregate-Video {
             return $false
         }
 
+        # Detect GPU availability for hardware encoding
+        $useGPU = $false
+        $videoCodec = "libx264"
+        $codecPreset = "medium"
+        
         try {
-            start-process -FilePath $ffprobe -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + $SourceVideoPath) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
+            $gpuInfo = & nvidia-smi --query-gpu=name --format=csv,noheader 2>&1
+            if($LASTEXITCODE -eq 0 -and $gpuInfo) {
+                $useGPU = $true
+                $videoCodec = "h264_nvenc"
+                $codecPreset = "p4"
+                write-host "GPU Encoding: ENABLED ($gpuInfo)" -ForegroundColor Green
+            }
+        }
+        catch {
+            # nvidia-smi not found or failed
+        }
+        
+        if(-not $useGPU) {
+            write-host "GPU Encoding: DISABLED (using CPU encoding)" -ForegroundColor Yellow
+            write-host "  Note: Video processing will be slower without GPU acceleration" -ForegroundColor Gray
+        }
+
+        try {
+            start-process -FilePath $ffprobe -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + [char]34 + $SourceVideoPath + [char]34) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
             $SourceVideoLength = (get-content C:\Windows\Temp\length.txt).Split(".")[0]
             write-host ("Source Video Length: " + $SourceVideoLength)
         }
@@ -67,7 +90,73 @@ function aggregate-Video {
         $videoHighlights = $Highlights | where-object {$_.type -eq "video"}
         $pictureHighlights = $Highlights | where-object {$_.type -eq "picture"}
         
-        write-host "Video highlights: $($videoHighlights.Count), Picture highlights: $($pictureHighlights.Count)"
+        write-host "Video highlights (before deduplication): $($videoHighlights.Count), Picture highlights: $($pictureHighlights.Count)"
+        
+        # Deduplicate overlapping video highlights
+        if($videoHighlights.Count -gt 1) {
+            $videoHighlights = $videoHighlights | Sort-Object start
+            $deduplicatedVideoHighlights = @()
+            
+            for($i = 0; $i -lt $videoHighlights.Count; $i++) {
+                $current = $videoHighlights[$i]
+                $merged = $false
+                
+                # Check if current overlaps with any already deduplicated highlight
+                for($j = 0; $j -lt $deduplicatedVideoHighlights.Count; $j++) {
+                    $existing = $deduplicatedVideoHighlights[$j]
+                    
+                    # Check for overlap: current starts before existing ends AND current ends after existing starts
+                    if($current.start -lt $existing.end -and $current.end -gt $existing.start) {
+                        write-host "Merging overlapping highlights: ($($existing.start)-$($existing.end)) and ($($current.start)-$($current.end))" -ForegroundColor Yellow
+                        
+                        # Merge: take earliest start and latest end
+                        $mergedStart = [Math]::Min($existing.start, $current.start)
+                        $mergedEnd = [Math]::Max($existing.end, $current.end)
+                        
+                        # Choose comment: prefer the one that starts earlier, but if it's empty use the other
+                        $mergedComment = ""
+                        if($existing.start -le $current.start) {
+                            # Existing starts earlier or same time
+                            if(![string]::IsNullOrWhiteSpace($existing.comment)) {
+                                $mergedComment = $existing.comment
+                            } else {
+                                $mergedComment = $current.comment
+                            }
+                        } else {
+                            # Current starts earlier
+                            if(![string]::IsNullOrWhiteSpace($current.comment)) {
+                                $mergedComment = $current.comment
+                            } else {
+                                $mergedComment = $existing.comment
+                            }
+                        }
+                        
+                        # Update the existing entry
+                        $deduplicatedVideoHighlights[$j] = [PSCustomObject]@{
+                            type = "video"
+                            start = $mergedStart
+                            end = $mergedEnd
+                            comment = $mergedComment
+                        }
+                        
+                        write-host "  Merged result: ($mergedStart-$mergedEnd) with comment: '$mergedComment'" -ForegroundColor Green
+                        $merged = $true
+                        break
+                    }
+                }
+                
+                # If not merged with any existing, add as new
+                if(-not $merged) {
+                    $deduplicatedVideoHighlights += $current
+                }
+            }
+            
+            $videoHighlights = $deduplicatedVideoHighlights
+            write-host "Video highlights after deduplication: $($videoHighlights.Count)" -ForegroundColor Cyan
+        }
+        
+        # Sort all video highlights by start time after deduplication
+        $videoHighlights = $videoHighlights | Sort-Object start
         
         # Validate video highlights only
         $provLength = 0 
@@ -100,86 +189,91 @@ function aggregate-Video {
         $addParts = [int]($LeftoverOutputLength / $PartLength)
         write-host ("Parts to add after Highlight:" + $addParts)
         
-        # Find the last VIDEO highlight end time to avoid adding parts after it
-        if($videoHighlights.Count -gt 0) {
-            $videoHighlights = $videoHighlights | sort-object start
-            $lastHighlightEnd = ($videoHighlights | Measure-Object -Property end -Maximum).Maximum
-        }
-        else {
-            $lastHighlightEnd = $SourceVideoLength
-        }
-        write-host ("Last video highlight ends at: " + $lastHighlightEnd)
-        
-        $Increment = [int]($lastHighlightEnd / $addparts)
-        write-host ("Increment is: " + $Increment)
-        $start = 0
-        $end = 0
-        write-host $Highlights
-        do {
-            $start = $start + $Increment
-            $end = $start + $PartLength
-            if($end -ge $lastHighlightEnd)
-            {
-                $Highlights = $Highlights | sort-object start
-                $provLength = calc-partLength $Highlights
-                write-host ("Highest Part length has been reached still " + ($OutputLength - $provLength).toString() + " Seconds missing. Adding to each part")
-                for ($i = 0; $i -lt ($Highlights.Count -1); $i++) {
-                    write-host $i
-                    $Highlights[$i].end = $Highlights[$i].end + 1
-                    if((calc-partLength $Highlights) -ge $OutputLength)
-                    {
+        # Only add random parts if PartLength > 0 and we need more content
+        if($PartLength -gt 0 -and $LeftoverOutputLength -gt 0 -and $addParts -gt 0) {
+            # Find the last VIDEO highlight end time to avoid adding parts after it
+            if($videoHighlights.Count -gt 0) {
+                $videoHighlights = $videoHighlights | sort-object start
+                $lastHighlightEnd = ($videoHighlights | Measure-Object -Property end -Maximum).Maximum
+            }
+            else {
+                $lastHighlightEnd = $SourceVideoLength
+            }
+            write-host ("Last video highlight ends at: " + $lastHighlightEnd)
+            
+            $Increment = [int]($lastHighlightEnd / $addparts)
+            write-host ("Increment is: " + $Increment)
+            $start = 0
+            $end = 0
+            write-host $Highlights
+            do {
+                $start = $start + $Increment
+                $end = $start + $PartLength
+                if($end -ge $lastHighlightEnd)
+                {
+                    $Highlights = $Highlights | sort-object start
+                    $provLength = calc-partLength $Highlights
+                    write-host ("Highest Part length has been reached still " + ($OutputLength - $provLength).toString() + " Seconds missing. Adding to each part")
+                    for ($i = 0; $i -lt ($Highlights.Count -1); $i++) {
+                        write-host $i
+                        $Highlights[$i].end = $Highlights[$i].end + 1
+                        if((calc-partLength $Highlights) -ge $OutputLength)
+                        {
+                            break
+                        }
+                    }
+                    break
+                }
+                $inputPart = ([PSCustomObject]@{type="video"; start=$start; end=$end})
+                $videoHighlights = ($videoHighlights | sort-object start)
+                
+                # Check if the new part overlaps with any existing VIDEO highlight
+                $hasOverlap = $false
+                foreach ($part in $videoHighlights) {
+                    # Check all overlap scenarios:
+                    # 1. New part completely inside existing part
+                    # 2. New part starts inside existing part
+                    # 3. New part ends inside existing part  
+                    # 4. New part completely contains existing part
+                    if (($inputPart.start -ge $part.start -and $inputPart.start -le $part.end) -or
+                        ($inputPart.end -ge $part.start -and $inputPart.end -le $part.end) -or
+                        ($inputPart.start -le $part.start -and $inputPart.end -ge $part.end)) {
+                        write-host ("Input part ($($inputPart.start)-$($inputPart.end)) overlaps with existing ($($part.start)-$($part.end)) - skipping")
+                        $hasOverlap = $true
                         break
                     }
                 }
-                break
-            }
-            $inputPart = ([PSCustomObject]@{type="video"; start=$start; end=$end})
-            $videoHighlights = ($videoHighlights | sort-object start)
-            
-            # Check if the new part overlaps with any existing VIDEO highlight
-            $hasOverlap = $false
-            foreach ($part in $videoHighlights) {
-                # Check all overlap scenarios:
-                # 1. New part completely inside existing part
-                # 2. New part starts inside existing part
-                # 3. New part ends inside existing part  
-                # 4. New part completely contains existing part
-                if (($inputPart.start -ge $part.start -and $inputPart.start -le $part.end) -or
-                    ($inputPart.end -ge $part.start -and $inputPart.end -le $part.end) -or
-                    ($inputPart.start -le $part.start -and $inputPart.end -ge $part.end)) {
-                    write-host ("Input part ($($inputPart.start)-$($inputPart.end)) overlaps with existing ($($part.start)-$($part.end)) - skipping")
-                    $hasOverlap = $true
-                    break
+                
+                # Only add the part if there's no overlap
+                if (-not $hasOverlap) {
+                    $videoHighlights += $inputPart
+                    write-host ("Added part: $($inputPart.start)-$($inputPart.end)")
                 }
-            }
-            
-            # Only add the part if there's no overlap
-            if (-not $hasOverlap) {
-                $videoHighlights += $inputPart
-                write-host ("Added part: $($inputPart.start)-$($inputPart.end)")
-            }
-            
-            # Recombine video and picture highlights for length calculation
-            $Highlights = @($videoHighlights) + @($pictureHighlights)
-            $provLength = calc-partLength $Highlights
-            
-            # If we're close to the target length, extend existing VIDEO parts instead of adding more
-            if (($OutputLength - $provLength) -le $partLength -and ($OutputLength - $provLength) -gt 0) {
-                $i = 0
-                while ($provLength -lt $OutputLength -and $i -lt $videoHighlights.Count) {
-                    $videoHighlights[$i].End = $videoHighlights[$i].end + 1
-                    $Highlights = @($videoHighlights) + @($pictureHighlights)
-                    $provLength = calc-partLength $Highlights
-                    $i++
+                
+                # Recombine video and picture highlights for length calculation
+                $Highlights = @($videoHighlights) + @($pictureHighlights)
+                $provLength = calc-partLength $Highlights
+                
+                # If we're close to the target length, extend existing VIDEO parts instead of adding more
+                if (($OutputLength - $provLength) -le $partLength -and ($OutputLength - $provLength) -gt 0) {
+                    $i = 0
+                    while ($provLength -lt $OutputLength -and $i -lt $videoHighlights.Count) {
+                        $videoHighlights[$i].End = $videoHighlights[$i].end + 1
+                        $Highlights = @($videoHighlights) + @($pictureHighlights)
+                        $provLength = calc-partLength $Highlights
+                        $i++
+                    }
                 }
-            }
-        } while (
-            $provLength -le $OutputLength
-        )
+            } while (
+                $provLength -le $OutputLength
+            )
+        }
+        else {
+            write-host "No random parts to add (PartLength=$PartLength, LeftoverLength=$LeftoverOutputLength)" -ForegroundColor Yellow
+        }
         
-        # Final recombine and sort
+        # Final recombine
         $Highlights = @($videoHighlights) + @($pictureHighlights)
-        $Highlights = ($Highlights | sort-object start)
         
         write-host "`n=== Final Highlights Summary ==="
         foreach($h in $Highlights) {
@@ -197,7 +291,7 @@ function aggregate-Video {
     process {
                 # Detect source video resolution for image scaling
                 try {
-                    start-process -FilePath $ffprobe -ArgumentList ("-v quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0 " + $SourceVideoPath) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\resolution.txt -PassThru -Wait | Out-Null
+                    start-process -FilePath $ffprobe -ArgumentList ("-v quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0 " + [char]34 + $SourceVideoPath + [char]34) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\resolution.txt -PassThru -Wait | Out-Null
                     $resolutionLine = (get-content C:\Windows\Temp\resolution.txt)
                     $videoWidth = $resolutionLine.Split(",")[0]
                     $videoHeight = $resolutionLine.Split(",")[1]
@@ -210,7 +304,7 @@ function aggregate-Video {
                 }
                 
                 # Build input arguments and assign input indices
-                $arguments = "-i " + $SourceVideoPath + " "
+                $arguments = "-i " + [char]34 + $SourceVideoPath + [char]34 + " "
                 $inputIndex = 1  # Start at 1 (0 is source video)
                 
                 foreach($highlight in $Highlights) {
@@ -253,6 +347,10 @@ function aggregate-Video {
                 
                 $arguments += "-filter_complex " + [char]34
                 
+                # Sort all highlights by start time right before building FFmpeg command
+                $Highlights = $Highlights | Sort-Object start
+                write-host "`n=== Building FFmpeg command with $($Highlights.Count) highlights in chronological order ==="
+                
                 #ffmpeg.exe -i D:\Insta360Parts\20221016-Full.mp4 -filter_complex "[0]atrim=3:12,asetpts=PTS-STARTPTS[ap1],[0]trim=3:12,setpts=PTS-STARTPTS[p1],[0]atrim=600:620,asetpts=PTS-STARTPTS[ap2],[0]trim=600:620,setpts=PTS-STARTPTS[p2],[p1][ap1][p2][ap2]
                 #concat=n=2:v=1:a=1[out][aout]" -map "[out]" -map "[aout]" D:\test.mp4 -hwaccel cuda -hwaccel_output_format cuda -y
                 $cut = ""
@@ -274,7 +372,7 @@ function aggregate-Video {
                             $escapedComment = $escapedComment -replace "\\", ""
                             $escapedComment = $escapedComment -replace "\|", ""
                             $escapedComment = $escapedComment -replace ";", ","
-                            $commentFilter = ",drawtext=text='" + $escapedComment + "':fontcolor=white:fontsize=130:x=(w-tw)/2:y=h-(2*lh):font=Arial Black"
+                            $commentFilter = ",drawtext=text='" + $escapedComment + "':fontcolor=white:fontsize=45:x=(w-tw)/2:y=h-(lh):font=Arial Black"
                         }
                         else {
                             $commentFilter = ""
@@ -288,7 +386,7 @@ function aggregate-Video {
                             $escapedComment = $escapedComment -replace "\\", ""
                             $escapedComment = $escapedComment -replace "\|", ""
                             $escapedComment = $escapedComment -replace ";", ","
-                            $commentFilter = ",drawtext=text='" + $escapedComment + "':fontcolor=white:fontsize=130:borderw=5:bordercolor=black:x=(w-tw)/2:y=h-(2*lh):font=Arial Black"
+                            $commentFilter = ",drawtext=text='" + $escapedComment + "':fontcolor=white:fontsize=45:borderw=5:bordercolor=black:x=(w-tw)/2:y=h-(lh):font=Arial Black"
                         }
                         else {
                             $commentFilter = ""
@@ -310,7 +408,7 @@ function aggregate-Video {
                             $escapedComment = $escapedComment -replace "\\", ""   # Remove backslashes
                             $escapedComment = $escapedComment -replace "\|", ""   # Remove pipes
                             $escapedComment = $escapedComment -replace ";", ","   # Replace semicolons
-                            $Comment=",drawtext=text='" + $escapedComment + "':fontcolor=white:fontsize=130:borderw=5:bordercolor=black:x=(w-tw)/2:y=h-(2*lh):font=Arial Black"
+                            $Comment=",drawtext=text='" + $escapedComment + "':fontcolor=white:fontsize=45:borderw=5:bordercolor=black:x=(w-tw)/2:y=h-(lh):font=Arial Black"
                         }
                         else 
                         {
@@ -330,23 +428,22 @@ function aggregate-Video {
                     $concat += "[p" + $endScreenIndex + "][ap" + $endScreenIndex + "]"
                     
                     if($musicInputIndex -ge 0) {
-                        # Mix background music with video audio using overlay percentages
-                        # MusicVolume = overlay percentage (e.g., 0.4 for 40% music)
-                        # OriginalVolume = 1 - overlay percentage (e.g., 0.6 for 60% original)
+                        # Normalize both audio streams to the same loudness level, then mix
+                        # This ensures predictable mixing ratios regardless of source loudness
                         $musicVol = $BackgroundMusic.MusicVolume
                         $origVol = $BackgroundMusic.OriginalVolume
-                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout];[aout]volume=" + $origVol + "[orig];[$musicInputIndex]volume=" + $musicVol + "[music];[orig][music]amix=inputs=2:duration=first:dropout_transition=2[finalout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[finalout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout];[aout]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $origVol + "[orig];[$musicInputIndex]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $musicVol + "[music];[orig][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[finalout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[finalout]" + [char]34 + " -c:v $videoCodec -preset $codecPreset -b:v 20M -c:a aac -b:a 192k " + [char]34 + $OutputPath + [char]34 + " -y"
                     } else {
-                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v $videoCodec -preset $codecPreset -b:v 20M -c:a aac -b:a 192k " + [char]34 + $OutputPath + [char]34 + " -y"
                     }
                 } else {
                     if($musicInputIndex -ge 0) {
-                        # Mix background music with video audio using overlay percentages
+                        # Normalize both audio streams to the same loudness level, then mix
                         $musicVol = $BackgroundMusic.MusicVolume
                         $origVol = $BackgroundMusic.OriginalVolume
-                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout];[aout]volume=" + $origVol + "[orig];[$musicInputIndex]volume=" + $musicVol + "[music];[orig][music]amix=inputs=2:duration=first:dropout_transition=2[finalout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[finalout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout];[aout]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $origVol + "[orig];[$musicInputIndex]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $musicVol + "[music];[orig][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[finalout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[finalout]" + [char]34 + " -c:v $videoCodec -preset $codecPreset -b:v 20M -c:a aac -b:a 192k " + [char]34 + $OutputPath + [char]34 + " -y"
                     } else {
-                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v h264_nvenc -preset p4 -b:v 20M -c:a aac -b:a 192k " + $OutputPath + " -y"
+                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v $videoCodec -preset $codecPreset -b:v 20M -c:a aac -b:a 192k " + [char]34 + $OutputPath + [char]34 + " -y"
                     }
                 }
 
@@ -357,12 +454,15 @@ function aggregate-Video {
                     write-host "FFmpeg process failed with exit code: $($process.ExitCode)" -ForegroundColor Red
                     return $false
                 }
+                
+                write-host "Video processing completed successfully" -ForegroundColor Green
             }
     
     end 
     {
-        start-process -FilePath $ffprobe -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + $OutputPath) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
+        start-process -FilePath $ffprobe -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + [char]34 + $OutputPath + [char]34) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\length.txt -PassThru -Wait | Out-Null
         $SourceVideoLength = (get-content C:\Windows\Temp\length.txt).Split(".")[0]
-        write-host ("Output Video Length: " + $SourceVideoLength)   
+        write-host ("Output Video Length: " + $SourceVideoLength)
+        return $true
     }
 }

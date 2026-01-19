@@ -3,6 +3,209 @@
 #Getting VideoSummary Creator 
 . .\VideoSummaryCreator
 
+# === Music Settings Helper Function ===
+function Get-MusicSettings {
+    param(
+        [Parameter(Mandatory=$true)]
+        [int]$TargetLength,
+        
+        [Parameter(Mandatory=$true)]
+        [System.Windows.Forms.CheckBox]$EnableMusicCheckbox,
+        
+        [Parameter(Mandatory=$true)]
+        [System.Windows.Forms.TextBox]$MusicPathTextbox,
+        
+        [Parameter(Mandatory=$true)]
+        [System.Windows.Forms.ComboBox]$OverlayComboBox
+    )
+    
+    $musicSettings = $null
+    
+    if(-not $EnableMusicCheckbox.Checked) {
+        return $null
+    }
+    
+    try {
+        $musicPath = $MusicPathTextbox.Text
+        if([string]::IsNullOrWhiteSpace($musicPath)) {
+            Write-Host "Background music is enabled but no music file/folder is selected." -ForegroundColor Yellow
+            return $null
+        }
+        if(!(Test-Path $musicPath)) {
+            Write-Host "Background music file/folder not found: $musicPath" -ForegroundColor Yellow
+            return $null
+        }
+        
+        # Determine if path is file or folder
+        $selectedMusicFile = $null
+        if(Test-Path $musicPath -PathType Container) {
+            # Check if it's OneDrive and warn user
+            if($musicPath -match "OneDrive") {
+                Write-Host "WARNING: OneDrive folder detected. This may be slow if files aren't downloaded locally." -ForegroundColor Yellow
+            }
+            
+            # It's a folder - find best matching music file(s)
+            Write-Host "Searching for music files in folder: $musicPath" -ForegroundColor Cyan
+            Write-Host "Scanning folder and subfolders (this may take a moment for large libraries)..." -ForegroundColor Yellow
+            $musicFiles = Get-ChildItem -Path $musicPath -Recurse -Include *.mp3,*.wav,*.m4a,*.aac | Select-Object -ExpandProperty FullName
+            Write-Host "Found $($musicFiles.Count) music files" -ForegroundColor Green
+            
+            if($musicFiles.Count -eq 0) {
+                Write-Host "No music files found in selected folder" -ForegroundColor Yellow
+                return $null
+            }
+            
+            # Get FFmpeg paths for duration detection
+            . "$PSScriptRoot\PrereqManager.ps1"
+            $ffmpegPaths = Ensure-FFmpeg
+            $ffprobe = $ffmpegPaths.FFprobe
+            $ffmpeg = $ffmpegPaths.FFmpeg
+            
+            # Use cached music folder analysis
+            . "$PSScriptRoot\MusicFolderCache.ps1"
+            $musicFilesWithDuration = Get-MusicFolderCache -FolderPath $musicPath -FFprobe $ffprobe
+            
+            if($musicFilesWithDuration.Count -eq 0) {
+                Write-Host "No valid music files found or analyzed" -ForegroundColor Yellow
+                return $null
+            }
+            
+            # Sort by duration
+            $musicFilesWithDuration = $musicFilesWithDuration | Sort-Object Duration
+            
+            # Try to find single file that fits
+            $bestMatch = $null
+            $bestDiff = [int]::MaxValue
+            
+            foreach($file in $musicFilesWithDuration) {
+                if($file.Duration -le $TargetLength) {
+                    $diff = $TargetLength - $file.Duration
+                    if($diff -lt $bestDiff) {
+                        $bestDiff = $diff
+                        $bestMatch = $file
+                    }
+                    Write-Host "  $($file.Name): $($file.Duration)s (diff: ${diff}s)" -ForegroundColor Gray
+                } else {
+                    Write-Host "  $($file.Name): $($file.Duration)s (too long)" -ForegroundColor DarkGray
+                }
+            }
+            
+            if($bestMatch) {
+                $selectedMusicFile = $bestMatch.Path
+                Write-Host "Selected single music file: $($bestMatch.Name) (best fit for ${TargetLength}s video)" -ForegroundColor Green
+            } else {
+                # No single file fits - need to concatenate multiple files
+                Write-Host "No single file fits. Concatenating multiple songs..." -ForegroundColor Yellow
+                
+                $selectedFiles = @()
+                $totalDuration = 0
+                
+                # Pick songs until we reach the target duration
+                foreach($file in $musicFilesWithDuration) {
+                    if($totalDuration -ge $TargetLength) {
+                        break
+                    }
+                    $selectedFiles += $file
+                    $totalDuration += $file.Duration
+                    Write-Host "  Adding: $($file.Name) ($($file.Duration)s) - Total: ${totalDuration}s" -ForegroundColor Cyan
+                }
+                
+                if($selectedFiles.Count -eq 0) {
+                    Write-Host "Unable to find suitable music files" -ForegroundColor Yellow
+                    return $null
+                }
+                
+                # Create concatenated music file
+                $tempMusicFile = Join-Path $env:TEMP "concatenated_music_$(Get-Date -Format 'yyyyMMdd_HHmmss').mp3"
+                Write-Host "Creating concatenated music file: $tempMusicFile" -ForegroundColor Cyan
+                
+                # Create concat file list
+                $concatListFile = Join-Path $env:TEMP "music_concat_list.txt"
+                $concatContent = ""
+                foreach($file in $selectedFiles) {
+                    # Escape single quotes and use forward slashes for FFmpeg
+                    $escapedPath = $file.Path.Replace("\", "/").Replace("'", "'\\''")
+                    $concatContent += "file '$escapedPath'`n"
+                }
+                # Use ASCII encoding to avoid UTF-8 BOM issues with FFmpeg
+                [System.IO.File]::WriteAllText($concatListFile, $concatContent, [System.Text.Encoding]::ASCII)
+                
+                # Concatenate music files (re-encode to ensure compatibility)
+                $concatArgs = "-f concat -safe 0 -i " + [char]34 + $concatListFile + [char]34 + " -c:a libmp3lame -b:a 192k " + [char]34 + $tempMusicFile + [char]34 + " -y"
+                Write-Host "FFmpeg concat command: $concatArgs" -ForegroundColor Gray
+                $process = Start-Process -FilePath $ffmpeg -ArgumentList $concatArgs -PassThru -Wait -NoNewWindow
+                
+                if($process.ExitCode -ne 0 -or !(Test-Path $tempMusicFile)) {
+                    Write-Host "Failed to concatenate music files" -ForegroundColor Red
+                    return $null
+                }
+                
+                $selectedMusicFile = $tempMusicFile
+                Write-Host "Successfully concatenated $($selectedFiles.Count) music files (total: ${totalDuration}s)" -ForegroundColor Green
+            }
+        } else {
+            # It's a file - use directly
+            $selectedMusicFile = $musicPath
+            Write-Host "Using selected music file: $(Split-Path $musicPath -Leaf)" -ForegroundColor Gray
+        }
+        
+        # Build music settings if we have a file
+        if($selectedMusicFile) {
+            # Parse overlay percentage (e.g., "20%" -> 0.2)
+            # Both audio streams will be normalized first, then mixed at these levels
+            $overlayText = $OverlayComboBox.Text
+            $overlayPercent = [int]($overlayText -replace '%', '')
+            $musicVolume = $overlayPercent / 100.0
+            $originalVolume = 1.0  # Keep video audio at reference level after normalization
+            
+            # Collect all music files used (for credits)
+            $usedMusicFiles = @()
+            if($selectedFiles -and $selectedFiles.Count -gt 0) {
+                # Multiple songs were concatenated - list all of them
+                foreach($file in $selectedFiles) {
+                    $usedMusicFiles += $file.Path
+                }
+            } else {
+                # Single song
+                $usedMusicFiles += $selectedMusicFile
+            }
+            
+            $musicSettings = @{
+                FilePath = $selectedMusicFile
+                MusicVolume = $musicVolume
+                OriginalVolume = $originalVolume
+                UsedFiles = $usedMusicFiles
+            }
+            
+            Write-Host "Music overlay enabled: $(Split-Path $selectedMusicFile -Leaf) (Music: $($overlayPercent)%, Original: $((1.0 - $musicVolume) * 100)%)" -ForegroundColor Gray
+            return $musicSettings
+        }
+    }
+    catch {
+        Write-Host "Error during music selection: $($_.Exception.Message)" -ForegroundColor Red
+    }
+    
+    return $null
+}
+
+# === Check Prerequisites on Startup ===
+Write-Host "=== Video Aggregator Starting ===" -ForegroundColor Cyan
+Write-Host "Checking prerequisites..." -ForegroundColor Gray
+
+. "$PSScriptRoot\PrereqManager.ps1"
+$prereqResults = Ensure-Prerequisites
+
+if(-not $prereqResults.Success) {
+    [System.Windows.Forms.MessageBox]::Show(
+        "Prerequisites check failed. Please check the console output for details.",
+        "Prerequisites Required",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Warning
+    )
+}
+
+Write-Host "`n=== Starting GUI ===" -ForegroundColor Cyan
+
 #File Selector with multi-file support
 $FileBrowser = New-Object System.Windows.Forms.OpenFileDialog
 $FileBrowser.InitialDirectory = "D:\"
@@ -196,6 +399,12 @@ function Load-GUIData {
             # Load Highlights
             if($data.Highlights -and $data.Highlights.Count -gt 0) {
                 foreach($highlight in $data.Highlights) {
+                    # Skip empty or invalid highlights
+                    if(-not $highlight.Start -or $highlight.Start -eq "00:00:00") {
+                        write-host "Skipping empty highlight"
+                        continue
+                    }
+                    
                     write-host "Loading highlight: Start=$($highlight.Start), End=$($highlight.End), Comment=$($highlight.Comment), Type=$($highlight.Type)"
                     
                     # Manually create highlight groupbox (don't use PerformClick to avoid side effects)
@@ -428,7 +637,7 @@ function Update-HighlightsTotal {
 $SummaryGUI = New-Object System.Windows.Forms.Form
 $SummaryGUI.Text ='Video Summary Creator'
 $SummaryGUI.AutoSize = $false
-$SummaryGUI.Width = 1200
+$SummaryGUI.Width = 1300
 $SummaryGUI.Height = 700
 $SummaryGUI.AutoScroll = $true
 
@@ -559,13 +768,28 @@ $SummaryGUI.Controls.Add($LBHighlightsTotal)
 #Add Highligts GroupBox
 $Highlights = create-GroupBox -Name "GPHighlights" -Height 25 -width 1000 -fromLeft 5 -fromTop 120 -addTo $SummaryGUI
 
-#PlusButton
-$BTAddHighlight = create-Button -text "+" -width 70 -height 25 -fromleft 1015 -fromTop 130 -addTo $SummaryGUI
-
 #Prepare Offset from Top for Add Function
 $Global:highFromTop = 15
 
-#Add Highlight Input Function
+#Add RUN Button 
+$BTNrun = create-Button -text "Create Summary" -width 120 -height 50 -fromleft 1105 -fromTop 5 -addTo $SummaryGUI
+
+#Add "Add Music to Source" Button
+$BTNAddMusicToSource = create-Button -text "Add Music to Source Video" -width 120 -height 50 -fromleft 1105 -fromTop 170 -addTo $SummaryGUI
+
+#Add "Clear Music Cache" Button
+$BTNClearCache = create-Button -text "Clear Music Cache" -width 120 -height 50 -fromleft 1105 -fromTop 115 -addTo $SummaryGUI
+$BTNClearCache.Add_Click({
+    . "$PSScriptRoot\MusicFolderCache.ps1"
+    Clear-MusicFolderCache
+    [System.Windows.Forms.MessageBox]::Show("Music folder cache cleared. Next folder scan will rebuild the cache.", "Cache Cleared", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+})
+
+#Add "Highlights & Speech" Button
+$BTNExtractSpeech = create-Button -text "Highlights & Speech" -width 120 -height 50 -fromleft 1105 -fromTop 60 -addTo $SummaryGUI
+
+#Add Highlight Button (+ button)
+$BTAddHighlight = create-Button -text "+" -width 70 -height 50 -fromleft 1020 -fromTop 120 -addTo $SummaryGUI
 $BTAddHighlight.Add_Click(
     {
         write-host "HighlightAdd Button has been clicked"
@@ -719,18 +943,286 @@ $BTAddHighlight.Add_Click(
     }
 )
 
-#Add RUN Button 
-$BTNrun = create-Button -text "RUN" -width 100 -height 25 -fromleft 1015 -fromTop 5 -addTo $SummaryGUI
-
-#Add "Add Music to Source" Button
-$BTNAddMusicToSource = create-Button -text "Add Music to\nSource Video" -width 100 -height 40 -fromleft 1015 -fromTop 35 -addTo $SummaryGUI
-
-#Add "Clear Music Cache" Button
-$BTNClearCache = create-Button -text "Clear Music\nCache" -width 100 -height 35 -fromleft 1015 -fromTop 80 -addTo $SummaryGUI
-$BTNClearCache.Add_Click({
-    . "$PSScriptRoot\MusicFolderCache.ps1"
-    Clear-MusicFolderCache
-    [System.Windows.Forms.MessageBox]::Show("Music folder cache cleared. Next folder scan will rebuild the cache.", "Cache Cleared", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+#Add "Summary & Speech" Button
+$BTNExtractSpeech.Add_Click({
+    # Show model selection dialog
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Whisper Speech Extraction"
+    $form.Size = New-Object System.Drawing.Size(450,295)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    
+    # Model selection
+    $lblModel = New-Object System.Windows.Forms.Label
+    $lblModel.Location = New-Object System.Drawing.Point(10,20)
+    $lblModel.Size = New-Object System.Drawing.Size(420,20)
+    $lblModel.Text = "Select Whisper Model:"
+    $form.Controls.Add($lblModel)
+    
+    $comboModel = New-Object System.Windows.Forms.ComboBox
+    $comboModel.Location = New-Object System.Drawing.Point(10,45)
+    $comboModel.Size = New-Object System.Drawing.Size(420,25)
+    $comboModel.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $comboModel.Items.AddRange(@("tiny (fastest, least accurate)", "base (recommended)", "small", "medium", "large (slowest, most accurate)"))
+    $comboModel.SelectedIndex = 3
+    $form.Controls.Add($comboModel)
+    
+    # Min silence gap
+    $lblGap = New-Object System.Windows.Forms.Label
+    $lblGap.Location = New-Object System.Drawing.Point(10,80)
+    $lblGap.Size = New-Object System.Drawing.Size(420,20)
+    $lblGap.Text = "Minimum silence gap between segments (seconds):"
+    $form.Controls.Add($lblGap)
+    
+    $numGap = New-Object System.Windows.Forms.NumericUpDown
+    $numGap.Location = New-Object System.Drawing.Point(10,105)
+    $numGap.Size = New-Object System.Drawing.Size(420,25)
+    $numGap.Minimum = 0.1
+    $numGap.Maximum = 10
+    $numGap.DecimalPlaces = 1
+    $numGap.Increment = 0.5
+    $numGap.Value = 1.0
+    $form.Controls.Add($numGap)
+    
+    # Language (optional)
+    $lblLang = New-Object System.Windows.Forms.Label
+    $lblLang.Location = New-Object System.Drawing.Point(10,140)
+    $lblLang.Size = New-Object System.Drawing.Size(420,20)
+    $lblLang.Text = "Language (optional, leave empty for auto-detect):"
+    $form.Controls.Add($lblLang)
+    
+    $txtLang = New-Object System.Windows.Forms.TextBox
+    $txtLang.Location = New-Object System.Drawing.Point(10,165)
+    $txtLang.Size = New-Object System.Drawing.Size(420,25)
+    $txtLang.Text = "de"
+    $form.Controls.Add($txtLang)
+    
+    # Add hint label
+    $lblLangHint = New-Object System.Windows.Forms.Label
+    $lblLangHint.Location = New-Object System.Drawing.Point(10,193)
+    $lblLangHint.Size = New-Object System.Drawing.Size(420,15)
+    $lblLangHint.Text = "(e.g., en, de, es, fr, etc.)"
+    $lblLangHint.ForeColor = [System.Drawing.Color]::Gray
+    $lblLangHint.Font = New-Object System.Drawing.Font("Segoe UI",7)
+    $form.Controls.Add($lblLangHint)
+    
+    # OK Button
+    $btnOK = New-Object System.Windows.Forms.Button
+    $btnOK.Location = New-Object System.Drawing.Point(240,215)
+    $btnOK.Size = New-Object System.Drawing.Size(90,30)
+    $btnOK.Text = "Extract"
+    $btnOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Controls.Add($btnOK)
+    $form.AcceptButton = $btnOK
+    
+    # Cancel Button
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Location = New-Object System.Drawing.Point(340,215)
+    $btnCancel.Size = New-Object System.Drawing.Size(90,30)
+    $btnCancel.Text = "Cancel"
+    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.Add($btnCancel)
+    $form.CancelButton = $btnCancel
+    
+    $result = $form.ShowDialog()
+    
+    if($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        # Parse model selection
+        $modelName = $comboModel.SelectedItem.ToString().Split(' ')[0]
+        $minGap = $numGap.Value
+        $language = $txtLang.Text.Trim()
+        
+        # Run extraction (no output file, just get segments)
+        Write-Host "`n========================================" -ForegroundColor Cyan
+        Write-Host "Starting Speech Extraction" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        
+        . "$PSScriptRoot\SpeechSegmentExtractor.ps1"
+        
+        $extractParams = @{
+            SourceVideoPath = $VideoFile
+            MinSilenceGap = $minGap
+            WhisperModel = $modelName
+        }
+        
+        if(![string]::IsNullOrWhiteSpace($language)) {
+            $extractParams['Language'] = $language
+        }
+        
+        $extractResult = Extract-SpeechSegments @extractParams
+        
+        if($extractResult.Success) {
+            $duration = [TimeSpan]::FromSeconds($extractResult.TotalDuration).ToString('hh\:mm\:ss')
+            
+            Write-Host "`n========================================" -ForegroundColor Green
+            Write-Host "Speech extraction complete!" -ForegroundColor Green
+            Write-Host "Segments found: $($extractResult.Segments.Count)" -ForegroundColor Green
+            Write-Host "Total speech duration: $duration" -ForegroundColor Green
+            Write-Host "========================================" -ForegroundColor Green
+            
+            # Now combine speech segments with manual highlights
+            Write-Host "`nCombining speech segments with manual highlights..." -ForegroundColor Cyan
+            
+            # Get manual highlights from GUI (using same logic as regular video creation)
+            $manualHighlights = @()
+            $highlightGroupBoxes = ($SummaryGUI.Controls | where-object {$_.Name -eq ("GPHighlights")}).Controls | where-object {$_.Name -eq ("HIGHLIGHTElement")}
+            
+            foreach($highlightBox in $highlightGroupBoxes) {
+                $StartTime = ($highlightBox.Controls | where-object {$_.Name -like "TPStart"}).Value
+                $EndTime = ($highlightBox.Controls | where-object {$_.Name -like "TPEnd"}).Value
+                $Comment = ($highlightBox.Controls | where-object {$_.Name -like "TBComment"}).Text
+                $IsPicture = ($highlightBox.Controls | where-object {$_.Name -like "CBPicture"}).Checked
+                $ImagePathControl = ($highlightBox.Controls | where-object {$_.Name -like "TBImagePath"})
+                $ImagePath = if($ImagePathControl) { $ImagePathControl.Text } else { "" }
+                $Duration = ($highlightBox.Controls | where-object {$_.Name -like "NBDuration"}).Value
+                
+                if($IsPicture) {
+                    # Picture highlight - skip if no image path
+                    if([string]::IsNullOrWhiteSpace($ImagePath)) {
+                        write-host "Skipping picture highlight with no image path" -ForegroundColor Yellow
+                        continue
+                    }
+                    if(!(Test-Path $ImagePath)) {
+                        write-host "WARNING - Image file doesn't exist: $ImagePath (skipping)" -ForegroundColor Yellow
+                        continue
+                    }
+                    
+                    # Use Start time as insertion point in timeline
+                    $InsertAt = [int]($StartTime.Hour * 3600 + $StartTime.Minute * 60 + $StartTime.Second)
+                    
+                    write-host "Picture highlight: $ImagePath at $InsertAt seconds, Duration: $Duration seconds, Comment: $Comment" -ForegroundColor Gray
+                    $manualHighlights += [PSCustomObject]@{
+                        type = "picture"
+                        imagePath = $ImagePath
+                        duration = [int]$Duration
+                        comment = $Comment
+                        start = $InsertAt  # Timeline position for sorting
+                        end = $InsertAt + [int]$Duration
+                    }
+                } else {
+                    # Video highlight
+                    $Start = [int]($StartTime.Hour * 3600 + $StartTime.Minute * 60 + $StartTime.Second)
+                    $End = [int]($EndTime.Hour * 3600 + $EndTime.Minute * 60 + $EndTime.Second)
+                    
+                    if($End -le $Start) {
+                        write-host "WARNING - Invalid highlight (end <= start): $Start to $End (skipping)" -ForegroundColor Yellow
+                        continue
+                    }
+                    
+                    write-host "Video highlight: Start: $Start seconds, End: $End seconds, Comment: $Comment" -ForegroundColor Gray
+                    $manualHighlights += [PSCustomObject]@{type="video"; start=$Start; end=$End; comment=$Comment}
+                }
+            }
+            
+            Write-Host "Manual highlights: $($manualHighlights.Count)" -ForegroundColor Gray
+            
+            # Convert speech segments to highlight format (using PSCustomObject like manual highlights)
+            $speechHighlights = @()
+            foreach($segment in $extractResult.Segments) {
+                $speechHighlights += [PSCustomObject]@{
+                    type = "video"
+                    start = [int]$segment.Start
+                    end = [int]$segment.End
+                    comment = ""  # No text overlay for speech segments
+                }
+            }
+            
+            Write-Host "Speech highlights: $($speechHighlights.Count)" -ForegroundColor Gray
+            
+            # Combine all highlights (deduplication will happen in aggregate-Video)
+            $allHighlights = $manualHighlights + $speechHighlights
+            
+            Write-Host "Total highlights for Highlights+Speech video (before deduplication): $($allHighlights.Count)" -ForegroundColor Gray
+            
+            # Calculate total duration of all highlights (manual + speech)
+            $totalDuration = 0
+            foreach($highlight in $allHighlights) {
+                if($highlight.type -eq "video") {
+                    $totalDuration += ($highlight.end - $highlight.start)
+                } elseif($highlight.type -eq "picture") {
+                    $totalDuration += $highlight.duration
+                }
+            }
+            
+            Write-Host "Total duration of all highlights: $totalDuration seconds ($([TimeSpan]::FromSeconds($totalDuration).ToString('hh\:mm\:ss')))" -ForegroundColor Cyan
+            
+            # Now create the video with aggregate-Video
+            Write-Host "`nCreating Summary+Speech video..." -ForegroundColor Cyan
+            
+            # Use total duration of highlights as target length (not GUI Summary Length)
+            $TargetLength = $totalDuration
+            $outputPath = $VideoFile.Replace(".mp4", "_Highlights_WithSpeech.mp4")
+            
+            # Get music settings using shared function
+            $musicSettings = Get-MusicSettings -TargetLength $TargetLength -EnableMusicCheckbox $CBEnableMusic -MusicPathTextbox $TBMusicPath -OverlayComboBox $CBMusicOverlay
+            
+            # Load VideoSummaryCreator
+            . "$PSScriptRoot\VideoSummaryCreator.ps1"
+            
+            # Create highlights video with speech (using same PartLength as regular summary)
+            $aggregateParams = @{
+                SourceVideoPath = $VideoFile
+                Highlights = $allHighlights
+                OutputLength = $TargetLength
+                PartLength = 4
+                OutputPath = $outputPath
+            }
+            
+            if($musicSettings) {
+                $aggregateParams['BackgroundMusic'] = $musicSettings
+            }
+            
+            $success = aggregate-Video @aggregateParams
+            
+            if($success) {
+                Write-Host "`n========================================" -ForegroundColor Green
+                Write-Host "Highlights+Speech video created successfully!" -ForegroundColor Green
+                Write-Host "Output: $outputPath" -ForegroundColor Green
+                Write-Host "========================================" -ForegroundColor Green
+                
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Highlights+Speech video created successfully!`n`n" +
+                    "Output: $outputPath`n`n" +
+                    "Total segments: $($allHighlights.Count)`n" +
+                    "  - Manual highlights: $($manualHighlights.Count)`n" +
+                    "  - Speech segments: $($speechHighlights.Count)",
+                    "Video Created",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                )
+                
+                # Ask if user wants to open the output folder
+                $openResult = [System.Windows.Forms.MessageBox]::Show(
+                    "Do you want to open the output folder?",
+                    "Open Folder?",
+                    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                    [System.Windows.Forms.MessageBoxIcon]::Question
+                )
+                
+                if($openResult -eq [System.Windows.Forms.DialogResult]::Yes) {
+                    explorer.exe /select,$outputPath
+                }
+            }
+            else {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Failed to create Highlights+Speech video. Check console for details.",
+                    "Video Creation Failed",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                )
+            }
+        }
+        else {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Speech extraction failed: $($extractResult.Error)",
+                "Extraction Failed",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error
+            )
+        }
+    }
 })
 
 #Add RUN Function
@@ -823,181 +1315,20 @@ $BTNrun.Add_Click(
             $VideoDirectory = Split-Path $VideoFile -Parent
             $SummaryName = Join-Path $VideoDirectory ($SummaryNameOnly + ".mp4")
         
-            # Collect Background Music settings
-            $musicSettings = $null
-            if($CBEnableMusic.Checked) {
-                try {
-                $musicPath = $TBMusicPath.Text
-                if([string]::IsNullOrWhiteSpace($musicPath)) {
-                    [System.Windows.Forms.MessageBox]::Show("Background music is enabled but no music file/folder is selected.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-                    return
-                }
-                if(!(Test-Path $musicPath)) {
-                    [System.Windows.Forms.MessageBox]::Show("Background music file/folder not found:`n$musicPath", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-                    return
-                }
-                
-                # Determine if path is file or folder
-                $selectedMusicFile = $null
-                if(Test-Path $musicPath -PathType Container) {
-                    # Check if it's OneDrive and warn user
-                    if($musicPath -match "OneDrive") {
-                        write-host "WARNING: OneDrive folder detected. This may be slow if files aren't downloaded locally." -ForegroundColor Yellow
-                        $oneDriveWarning = [System.Windows.Forms.MessageBox]::Show(
-                            "You selected a OneDrive folder. This may take a LONG time if files are cloud-only.`n`nRecommendations:`n• Use a local folder instead (copy music to D:\Music)`n• Or select a specific file with 'File' button`n• Or make OneDrive files 'Always keep on this device'`n`nContinue anyway?",
-                            "OneDrive Warning",
-                            [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                            [System.Windows.Forms.MessageBoxIcon]::Warning
-                        )
-                        if($oneDriveWarning -eq [System.Windows.Forms.DialogResult]::No) {
-                            write-host "User cancelled OneDrive operation" -ForegroundColor Yellow
-                            return
-                        }
-                    }
-                    
-                    # It's a folder - find best matching music file(s)
-                    write-host "Searching for music files in folder: $musicPath" -ForegroundColor Cyan
-                    write-host "Scanning folder and subfolders (this may take a moment for large libraries)..." -ForegroundColor Yellow
-                    $musicFiles = Get-ChildItem -Path $musicPath -Recurse -Include *.mp3,*.wav,*.m4a,*.aac | Select-Object -ExpandProperty FullName
-                    write-host "Found $($musicFiles.Count) music files" -ForegroundColor Green
-                    
-                    if($musicFiles.Count -eq 0) {
-                        [System.Windows.Forms.MessageBox]::Show("No music files found in selected folder:`n$musicPath", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-                        return
-                    }
-                    
-                    
-                    # Get FFmpeg paths for duration detection
-                    . "$PSScriptRoot\FFmpegManager.ps1"
-                    $ffmpegPaths = Ensure-FFmpeg
-                    $ffprobe = $ffmpegPaths.FFprobe
-                    $ffmpeg = $ffmpegPaths.FFmpeg
-                    
-                    # Use cached music folder analysis
-                    . "$PSScriptRoot\MusicFolderCache.ps1"
-                    $musicFilesWithDuration = Get-MusicFolderCache -FolderPath $musicPath -FFprobe $ffprobe
-                    
-                    if($musicFilesWithDuration.Count -eq 0) {
-                        [System.Windows.Forms.MessageBox]::Show("No valid music files found or analyzed.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-                        return
-                    }
-                    
-                    # Sort by duration
-                    $musicFilesWithDuration = $musicFilesWithDuration | Sort-Object Duration
-                    
-                    # Try to find single file that fits
-                    $bestMatch = $null
-                    $bestDiff = [int]::MaxValue
-                    
-                    foreach($file in $musicFilesWithDuration) {
-                        if($file.Duration -le $SummaryLength) {
-                            $diff = $SummaryLength - $file.Duration
-                            if($diff -lt $bestDiff) {
-                                $bestDiff = $diff
-                                $bestMatch = $file
-                            }
-                            write-host "  $($file.Name): $($file.Duration)s (diff: ${diff}s)" -ForegroundColor Gray
-                        } else {
-                            write-host "  $($file.Name): $($file.Duration)s (too long)" -ForegroundColor DarkGray
-                        }
-                    }
-                    
-                    if($bestMatch) {
-                        $selectedMusicFile = $bestMatch.Path
-                        write-host "Selected single music file: $($bestMatch.Name) (best fit for ${SummaryLength}s video)" -ForegroundColor Green
-                    } else {
-                        # No single file fits - need to concatenate multiple files
-                        write-host "No single file fits. Concatenating multiple songs..." -ForegroundColor Yellow
-                        
-                        $selectedFiles = @()
-                        $totalDuration = 0
-                        
-                        # Pick songs until we reach the target duration
-                        foreach($file in $musicFilesWithDuration) {
-                            if($totalDuration -ge $SummaryLength) {
-                                break
-                            }
-                            $selectedFiles += $file
-                            $totalDuration += $file.Duration
-                            write-host "  Adding: $($file.Name) ($($file.Duration)s) - Total: ${totalDuration}s" -ForegroundColor Cyan
-                        }
-                        
-                        if($selectedFiles.Count -eq 0) {
-                            [System.Windows.Forms.MessageBox]::Show("Unable to find suitable music files.", "No Music", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-                            return
-                        }
-                        
-                        # Create concatenated music file
-                        $tempMusicFile = Join-Path $env:TEMP "concatenated_music_$(Get-Date -Format 'yyyyMMdd_HHmmss').mp3"
-                        write-host "Creating concatenated music file: $tempMusicFile" -ForegroundColor Cyan
-                        
-                        # Create concat file list
-                        $concatListFile = Join-Path $env:TEMP "music_concat_list.txt"
-                        $concatContent = ""
-                        foreach($file in $selectedFiles) {
-                            $concatContent += "file '" + $file.Path.Replace("'", "'\\''") + "'`n"
-                        }
-                        $concatContent | Set-Content -Path $concatListFile -Encoding UTF8
-                        
-                        # Concatenate music files
-                        $concatArgs = "-f concat -safe 0 -i " + [char]34 + $concatListFile + [char]34 + " -c copy " + [char]34 + $tempMusicFile + [char]34 + " -y"
-                        write-host "FFmpeg concat command: $concatArgs" -ForegroundColor Gray
-                        $process = start-process -FilePath $ffmpeg -ArgumentList $concatArgs -PassThru -Wait -NoNewWindow
-                        
-                        if($process.ExitCode -ne 0 -or !(Test-Path $tempMusicFile)) {
-                            write-host "Failed to concatenate music files" -ForegroundColor Red
-                            [System.Windows.Forms.MessageBox]::Show("Failed to concatenate music files.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-                            return
-                        }
-                        
-                        $selectedMusicFile = $tempMusicFile
-                        write-host "Successfully concatenated $($selectedFiles.Count) music files (total: ${totalDuration}s)" -ForegroundColor Green
-                    }
-                } else {
-                    # It's a file - use directly
-                    $selectedMusicFile = $musicPath
-                    write-host "Using selected music file: $(Split-Path $musicPath -Leaf)"
-                }
-                }
-                catch [System.Management.Automation.PipelineStoppedException] {
-                    write-host "Music selection cancelled by user" -ForegroundColor Yellow
-                    return
-                }
-                catch {
-                    write-host "Error during music selection: $($_.Exception.Message)" -ForegroundColor Red
-                    [System.Windows.Forms.MessageBox]::Show("Error selecting music:`n`n$($_.Exception.Message)", "Music Selection Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-                    return
-                }
-                
-                # Parse overlay percentage (e.g., "40%" -> 0.4)
-                $overlayText = $CBMusicOverlay.Text
-                $overlayPercent = [int]($overlayText -replace '%', '')
-                $musicVolume = $overlayPercent / 100.0
-                $originalVolume = 1.0 - $musicVolume
-                
-                $musicSettings = @{
-                    FilePath = $selectedMusicFile
-                    MusicVolume = $musicVolume
-                    OriginalVolume = $originalVolume
-                }
-                
+            # Collect Background Music settings using shared function
+            $musicSettings = Get-MusicSettings -TargetLength $SummaryLength -EnableMusicCheckbox $CBEnableMusic -MusicPathTextbox $TBMusicPath -OverlayComboBox $CBMusicOverlay
+            
+            if($CBEnableMusic.Checked -and $null -eq $musicSettings) {
+                # Music was enabled but failed to load - show error and return
+                [System.Windows.Forms.MessageBox]::Show("Background music is enabled but could not be loaded. Check console for details.", "Music Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                return
+            }
+            
+            if($musicSettings) {
                 # Generate music credits file
                 . "$PSScriptRoot\GenerateMusicCredits.ps1"
                 $creditsFile = Join-Path $VideoDirectory ($SummaryNameOnly + "_MusicCredits.txt")
-                
-                # Collect all music files used
-                $usedMusicFiles = @()
-                if($selectedMusicFile -eq $tempMusicFile -and (Test-Path $tempMusicFile)) {
-                    # Multiple songs were concatenated - list all of them
-                    foreach($file in $selectedFiles) {
-                        $usedMusicFiles += $file.Path
-                    }
-                } else {
-                    # Single song
-                    $usedMusicFiles += $selectedMusicFile
-                }
-                
-                Generate-MusicCredits -MusicFiles $usedMusicFiles -OutputPath $creditsFile
+                Generate-MusicCredits -MusicFiles $musicSettings.UsedFiles -OutputPath $creditsFile
             }
         
             write-host "`nSummary Length: $SummaryLength seconds"
@@ -1019,7 +1350,7 @@ $BTNrun.Add_Click(
             }
         }
         catch {
-            write-host "Error during video processing: $($_.Exception.Message)" -ForegroundColor Red
+            write-host "Error during video proc§essing: $($_.Exception.Message)" -ForegroundColor Red
             [System.Windows.Forms.MessageBox]::Show("An error occurred during video processing:`n`n$($_.Exception.Message)", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         }
     }
@@ -1152,7 +1483,7 @@ $BTNAddMusicToSource.Add_Click(
                 }
                 
                 # Get video length
-                . "$PSScriptRoot\FFmpegManager.ps1"
+                . "$PSScriptRoot\PrereqManager.ps1"
                 $ffmpegPaths = Ensure-FFmpeg
                 $ffprobe = $ffmpegPaths.FFprobe
                 $ffmpeg = $ffmpegPaths.FFmpeg

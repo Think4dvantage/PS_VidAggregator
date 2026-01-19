@@ -11,14 +11,16 @@ PSVA (PowerShell Video Aggregator) is a Windows-based video editing tool that cr
 - **Language**: PowerShell (Version 3.0 - 6.x, NOT PowerShell 7+)
 - **OS**: Windows only (uses Windows Forms GUI)
 - **Dependencies**: 
-  - FFmpeg (auto-downloaded and managed via FFmpegManager.ps1)
+  - FFmpeg (auto-downloaded via PrereqManager.ps1)
+  - Python 3.13+ with pip (auto-installed via winget)
+  - Python packages: openai-whisper, torch (CUDA), soundfile, scipy, packaging (auto-installed)
   - .NET Framework / Windows Forms
-  - Optional: NVIDIA GPU for hardware encoding (h264_nvenc, CUDA acceleration)
-  - Fallback to CPU encoding should be implemented if GPU unavailable
+  - Optional but recommended: NVIDIA GPU for hardware encoding (h264_nvenc, CUDA acceleration)
+  - Fallback to CPU encoding implemented if GPU unavailable
 
 ## Installation
 1. Clone the repository
-2. Run `GUI.ps1` - FFmpeg will auto-download on first run
+2. Run `GUI.ps1` - All prerequisites (FFmpeg, Python, packages) will auto-install on first run
 3. Select video file and start marking highlights
 
 ## Typical Workflow
@@ -35,10 +37,11 @@ PSVA (PowerShell Video Aggregator) is a Windows-based video editing tool that cr
 PS_VidAggregator/
 ├── GUI.ps1                    # Main entry point - launches GUI
 ├── lib.ps1                    # Windows Forms helper functions
-├── FFmpegManager.ps1          # FFmpeg download/update manager
+├── PrereqManager.ps1          # Manages FFmpeg, Python, and pip packages
 ├── FFMPEGPSCommands.ps1       # Reference FFmpeg commands (examples)
 ├── VideoSummaryCreator.ps1    # Core video processing logic
 ├── VideoConcatenator.ps1      # Video concatenation functionality
+├── SpeechSegmentExtractor.ps1 # Whisper AI speech extraction with VAD
 ├── RandomVideoSelector.ps1    # Helper for random video selection
 ├── ShortsShortener.ps1        # Tool for splitting long shorts
 ├── archive/                   # JSON files with saved highlight data
@@ -103,20 +106,33 @@ PS_VidAggregator/
 - Position: Bottom center
 - Escapes special characters (: → -, remove quotes/backslashes)
 
-#### 3. FFmpegManager.ps1 - Dependency Management
-**Function**: `Ensure-FFmpeg`
+#### 3. PrereqManager.ps1 - Prerequisite Management
+**Functions**: `Ensure-Prerequisites`, `Ensure-FFmpeg`, `Ensure-Python`, `Ensure-PythonPackages`
 
 **Features**:
 - Auto-downloads FFmpeg from GitHub (BtbN/FFmpeg-Builds)
-- Checks version age (prompts update if >30 days old)
+- Checks FFmpeg version age (prompts update if >30 days old)
+- Auto-installs Python via winget (Python.Python.3.13)
+- Auto-installs Python packages: openai-whisper, torch (with CUDA), soundfile, scipy, packaging
 - Stores download date in `.version.txt`
-- Returns paths: `@{FFmpeg, FFprobe, Directory}`
+- Returns comprehensive status: `@{FFmpeg, Python, PythonPackages, Success}`
 - Uses TLS 1.2 for HTTPS downloads
 
-**Update Logic**:
+**FFmpeg Update Logic**:
 - Compares local download date with GitHub release date
 - Only updates if newer version published
 - Preserves existing installation if up-to-date
+
+**Python Install Logic**:
+- Checks if python command available in PATH
+- Installs via winget if missing
+- Detects common Python installation paths
+- May require PowerShell restart for PATH updates
+
+**Python Packages Logic**:
+- Checks each package with `python -c "import package"`
+- Installs missing packages via pip
+- PyTorch installed with CUDA support (cu118) for GPU acceleration
 
 #### 4. VideoConcatenator.ps1
 **Function**: `Concatenate-Video`
@@ -269,10 +285,11 @@ if($process.ExitCode -ne 0) {
 
 ### When Adding Features
 1. **Follow PowerShell conventions** - Verb-Noun functions, [CmdletBinding()]
-2. **Use FFmpegManager** - Always call Ensure-FFmpeg before using FFmpeg
+2. **Use PrereqManager** - Always call Ensure-Prerequisites or Ensure-FFmpeg before using FFmpeg
 3. **Update JSON schema** - Add new fields to archive format if needed
 4. **GUI layout** - Use create-* functions, maintain consistent spacing
 5. **Error handling** - Return $false on failure, show user-friendly messages
+6. **Python features** - Check Python availability before using Whisper AI features
 
 ### When Debugging
 1. **Check console output** - Many debug messages use write-host

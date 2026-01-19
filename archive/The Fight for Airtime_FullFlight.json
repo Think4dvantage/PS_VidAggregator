@@ -1,0 +1,89 @@
+﻿{
+    "Highlights":  [
+                       {
+                           "End":  "00:00:10",
+                           "Comment":  "Launch on First",
+                           "Type":  "video",
+                           "Start":  "00:00:01"
+                       },
+                       {
+                           "End":  "00:56:37",
+                           "Comment":  "Landing on Höhenmatte",
+                           "Type":  "video",
+                           "Start":  "00:56:30"
+                       },
+                       {
+                           "End":  "00:13:34",
+                           "Comment":  "(too early) Leaving of first Thermal",
+                           "Type":  "video",
+                           "Start":  "00:13:29"
+                       },
+                       {
+                           "End":  "00:19:10",
+                           "Comment":  "gaining height in front of Reeti",
+                           "Type":  "video",
+                           "Start":  "00:19:05"
+                       },
+                       {
+                           "End":  "00:19:45",
+                           "Comment":  "Past the Faulhorn (right)",
+                           "Type":  "video",
+                           "Start":  "00:19:40"
+                       },
+                       {
+                           "End":  "00:21:21",
+                           "Comment":  "Sägistalsewli coldest place of Swiss",
+                           "Type":  "video",
+                           "Start":  "00:21:16"
+                       },
+                       {
+                           "End":  "00:27:53",
+                           "Comment":  "Climbing over Lütschenthal",
+                           "Type":  "video",
+                           "Start":  "00:27:48"
+                       },
+                       {
+                           "End":  "00:31:32",
+                           "Comment":  "Past the Laucherhorn",
+                           "Type":  "video",
+                           "Start":  "00:31:27"
+                       },
+                       {
+                           "End":  "00:32:45",
+                           "Comment":  "Securing glide to Interlaken",
+                           "Type":  "video",
+                           "Start":  "00:32:40"
+                       },
+                       {
+                           "End":  "00:35:40",
+                           "Comment":  "past the Breitlauenen launch",
+                           "Type":  "video",
+                           "Start":  "00:35:35"
+                       },
+                       {
+                           "End":  "00:44:05",
+                           "Comment":  "Closely past the REGA Airspace",
+                           "Type":  "video",
+                           "Start":  "00:44:00"
+                       },
+                       {
+                           "End":  "00:47:25",
+                           "Comment":  "Flight finish soaring",
+                           "Type":  "video",
+                           "Start":  "00:47:20"
+                       },
+                       {
+                           "End":  "00:55:00",
+                           "Comment":  "Unwanted Thermals at the Landing",
+                           "Type":  "video",
+                           "Start":  "00:54:55"
+                       }
+                   ],
+    "SummaryLength":  "00:01:42",
+    "BackgroundMusic":  {
+                            "OverlayPercentage":  "20%",
+                            "FilePath":  "C:\\Users\\rapha\\OneDrive\\Audio\\EDM",
+                            "Enabled":  true
+                        },
+    "SummaryName":  "The Fight for Airtime_Summary"
+}
