@@ -1,0 +1,65 @@
+﻿{
+    "Highlights":  [
+                       {
+                           "End":  "00:00:22",
+                           "Comment":  "Start Tom",
+                           "Type":  "video",
+                           "Start":  "00:00:11"
+                       },
+                       {
+                           "End":  "00:00:51",
+                           "Comment":  "Jumpstart random Stranger",
+                           "Type":  "video",
+                           "Start":  "00:00:41"
+                       },
+                       {
+                           "End":  "00:01:10",
+                           "Comment":  "Start Raffi",
+                           "Type":  "video",
+                           "Start":  "00:01:00"
+                       },
+                       {
+                           "End":  "00:09:22",
+                           "Comment":  "Tom direkt unter mir",
+                           "Type":  "video",
+                           "Start":  "00:09:10"
+                       },
+                       {
+                           "End":  "00:12:11",
+                           "Comment":  "Tom auf Kollisionskurs",
+                           "Type":  "video",
+                           "Start":  "00:12:05"
+                       },
+                       {
+                           "End":  "00:14:11",
+                           "Comment":  "Noch ein Kollisionsversuch - hihi",
+                           "Type":  "video",
+                           "Start":  "00:14:05"
+                       },
+                       {
+                           "End":  "00:19:30",
+                           "Comment":  "Sicht richtung Sefinental",
+                           "Type":  "video",
+                           "Start":  "00:19:25"
+                       },
+                       {
+                           "End":  "00:19:55",
+                           "Comment":  "Sicht richtung Gimmelwald",
+                           "Type":  "video",
+                           "Start":  "00:19:50"
+                       },
+                       {
+                           "End":  "00:29:59",
+                           "Comment":  "Landung im Stechelberg",
+                           "Type":  "video",
+                           "Start":  "00:29:50"
+                       }
+                   ],
+    "SummaryLength":  "00:02:02",
+    "BackgroundMusic":  {
+                            "OverlayPercentage":  "20%",
+                            "FilePath":  "",
+                            "Enabled":  true
+                        },
+    "SummaryName":  "2026-02-08_Summary2"
+}

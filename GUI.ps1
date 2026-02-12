@@ -1,9 +1,201 @@
 #Getting GUI Lib
 . .\lib.ps1
 #Getting VideoSummary Creator 
-. .\VideoSummaryCreator
+. .\VideoSummaryCreator.ps1
 
-# === Music Settings Helper Function ===
+# === Helper Function to Select Music from Path ===
+function Get-MusicFromPath {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$MusicPath,
+        
+        [Parameter(Mandatory=$true)]
+        [int]$TargetLength,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$OverlayText  # e.g., "20%"
+    )
+    
+    try {
+        if(!(Test-Path $MusicPath)) {
+            Write-Host "Music file/folder not found: $MusicPath" -ForegroundColor Yellow
+            return $null
+        }
+        
+        # Determine if path is file or folder
+        $selectedMusicFile = $null
+        $selectedFiles = @()
+        $needsLooping = $false
+        
+        if(Test-Path $MusicPath -PathType Container) {
+            # Check if it's OneDrive and warn user
+            if($MusicPath -match "OneDrive") {
+                Write-Host "WARNING: OneDrive folder detected. This may be slow if files aren't downloaded locally." -ForegroundColor Yellow
+            }
+            
+            # It's a folder - find best matching music file(s)
+            Write-Host "Searching for music files in folder: $MusicPath" -ForegroundColor Cyan
+            Write-Host "Scanning folder and subfolders (this may take a moment for large libraries)..." -ForegroundColor Yellow
+            $musicFiles = Get-ChildItem -Path $MusicPath -Recurse -Include *.mp3,*.wav,*.m4a,*.aac | Select-Object -ExpandProperty FullName
+            Write-Host "Found $($musicFiles.Count) music files" -ForegroundColor Green
+            
+            if($musicFiles.Count -eq 0) {
+                Write-Host "No music files found in selected folder" -ForegroundColor Yellow
+                return $null
+            }
+            
+            # Get FFmpeg paths for duration detection
+            . "$PSScriptRoot\PrereqManager.ps1"
+            $ffmpegPaths = Ensure-FFmpeg
+            $ffprobe = $ffmpegPaths.FFprobe
+            $ffmpeg = $ffmpegPaths.FFmpeg
+            
+            # Use cached music folder analysis
+            . "$PSScriptRoot\MusicFolderCache.ps1"
+            $musicFilesWithDuration = Get-MusicFolderCache -FolderPath $MusicPath -FFprobe $ffprobe
+            
+            if($musicFilesWithDuration.Count -eq 0) {
+                Write-Host "No valid music files found or analyzed" -ForegroundColor Yellow
+                return $null
+            }
+            
+            # Sort by duration
+            $musicFilesWithDuration = $musicFilesWithDuration | Sort-Object Duration
+            
+            # Always concatenate multiple random songs for variety
+            Write-Host "Selecting random songs to concatenate..." -ForegroundColor Yellow
+            
+            $selectedFiles = @()
+            $totalDuration = 0
+            
+            # Shuffle the music files for random selection
+            $shuffledFiles = $musicFilesWithDuration | Sort-Object { Get-Random }
+            
+            Write-Host "Available songs after shuffle:" -ForegroundColor Cyan
+            foreach($f in $shuffledFiles | Select-Object -First 5) {
+                Write-Host "  - $($f.Name) ($($f.Duration)s)" -ForegroundColor Gray
+            }
+            if($shuffledFiles.Count -gt 5) {
+                Write-Host "  ... and $($shuffledFiles.Count - 5) more" -ForegroundColor Gray
+            }
+            
+            # Keep adding random songs until we have enough to cover the video
+            # We'll loop through the shuffled list multiple times if needed
+            $fileIndex = 0
+            while($totalDuration -lt $TargetLength) {
+                $file = $shuffledFiles[$fileIndex % $shuffledFiles.Count]
+                $selectedFiles += $file
+                $totalDuration += $file.Duration
+                Write-Host "  Adding: $($file.Name) ($($file.Duration)s) - Total: ${totalDuration}s" -ForegroundColor Cyan
+                $fileIndex++
+                
+                # Safety check to prevent infinite loop (shouldn't happen, but just in case)
+                if($fileIndex -gt $shuffledFiles.Count * 10) {
+                    Write-Host "  Reached safety limit - stopping music selection" -ForegroundColor Yellow
+                    break
+                }
+            }
+            
+            $needsLooping = $false  # We have enough music now
+            Write-Host "  Concatenated music covers full video length (${totalDuration}s >= ${TargetLength}s)" -ForegroundColor Green
+            Write-Host "`nSongs selected for concatenation:" -ForegroundColor Magenta
+            for($idx = 0; $idx -lt $selectedFiles.Count; $idx++) {
+                Write-Host "  $($idx + 1). $($selectedFiles[$idx].Name) ($($selectedFiles[$idx].Duration)s)" -ForegroundColor Magenta
+            }
+            Write-Host ""
+            
+            if($selectedFiles.Count -eq 0) {
+                Write-Host "Unable to find suitable music files" -ForegroundColor Yellow
+                return $null
+            }
+                
+                # Create concatenated music file
+                $tempMusicFile = Join-Path $env:TEMP "concatenated_music_$(Get-Date -Format 'yyyyMMdd_HHmmss').mp3"
+                Write-Host "Creating concatenated music file: $tempMusicFile" -ForegroundColor Cyan
+                
+                # Create concat file list
+                $concatListFile = Join-Path $env:TEMP "music_concat_list.txt"
+                $concatContent = ""
+                foreach($file in $selectedFiles) {
+                    # Escape single quotes and use forward slashes for FFmpeg
+                    $escapedPath = $file.Path.Replace("\", "/").Replace("'", "'\\''")
+                    $concatContent += "file '$escapedPath'`n"
+                }
+                # Use ASCII encoding to avoid UTF-8 BOM issues with FFmpeg
+                [System.IO.File]::WriteAllText($concatListFile, $concatContent, [System.Text.Encoding]::ASCII)
+                
+                Write-Host "Concat list file contents:" -ForegroundColor Gray
+                Write-Host $concatContent -ForegroundColor DarkGray
+                
+                # Concatenate music files (re-encode to ensure compatibility)
+                $concatArgs = "-f concat -safe 0 -i " + [char]34 + $concatListFile + [char]34 + " -c:a libmp3lame -b:a 192k " + [char]34 + $tempMusicFile + [char]34 + " -y"
+                Write-Host "FFmpeg concat command: $concatArgs" -ForegroundColor Gray
+                $process = Start-Process -FilePath $ffmpeg -ArgumentList $concatArgs -PassThru -Wait -NoNewWindow
+                
+                if($process.ExitCode -ne 0 -or !(Test-Path $tempMusicFile)) {
+                    Write-Host "Failed to concatenate music files (Exit code: $($process.ExitCode))" -ForegroundColor Red
+                    return $null
+                }
+                
+                # Verify concatenated file duration
+                try {
+                    start-process -FilePath $ffprobe -ArgumentList ("-v quiet -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " + [char]34 + $tempMusicFile + [char]34) -NoNewWindow -RedirectStandardOutput C:\Windows\temp\concatlength.txt -PassThru -Wait | Out-Null
+                    $concatLength = [int]((get-content C:\Windows\Temp\concatlength.txt).Split(".")[0])
+                    Write-Host "Concatenated music file duration: ${concatLength}s (expected: ~${totalDuration}s)" -ForegroundColor Green
+                } catch {
+                    Write-Host "Could not verify concatenated file duration" -ForegroundColor Yellow
+                }
+                
+                $selectedMusicFile = $tempMusicFile
+                Write-Host "Successfully concatenated $($selectedFiles.Count) music files" -ForegroundColor Green
+            }
+        } else {
+            # It's a file - use directly and always loop it
+            $selectedMusicFile = $MusicPath
+            $needsLooping = $true  # Single file always needs looping to fill video
+            Write-Host "Using selected music file: $(Split-Path $MusicPath -Leaf)" -ForegroundColor Gray
+        }
+        
+        # Build music settings if we have a file
+        if($selectedMusicFile) {
+            # Parse overlay percentage (e.g., "20%" -> 0.2)
+            # Both audio streams will be normalized first, then mixed at these levels
+            $overlayPercent = [int]($OverlayText -replace '%', '')
+            $musicVolume = $overlayPercent / 100.0
+            $originalVolume = 1.0  # Keep video audio at reference level after normalization
+            
+            # Collect all music files used (for credits)
+            $usedMusicFiles = @()
+            if($selectedFiles -and $selectedFiles.Count -gt 0) {
+                # Multiple songs were concatenated - list all of them
+                foreach($file in $selectedFiles) {
+                    $usedMusicFiles += $file.Path
+                }
+            } else {
+                # Single song
+                $usedMusicFiles += $selectedMusicFile
+            }
+            
+            $musicSettings = @{
+                FilePath = $selectedMusicFile
+                MusicVolume = $musicVolume
+                OriginalVolume = $originalVolume
+                UsedFiles = $usedMusicFiles
+                ShouldLoop = $needsLooping  # Loop if needed (single file always loops, concatenated never loops)
+            }
+            
+            Write-Host "Music overlay enabled: $(Split-Path $selectedMusicFile -Leaf) (Music: $($overlayPercent)%, Original: $((1.0 - $musicVolume) * 100)%)" -ForegroundColor Gray
+            return $musicSettings
+        }
+    }
+    catch {
+        Write-Host "Error during music selection: $($_.Exception.Message)" -ForegroundColor Red
+    }
+    
+    return $null
+}
+
+# === Music Settings Helper Function (GUI Wrapper) ===
 function Get-MusicSettings {
     param(
         [Parameter(Mandatory=$true)]
@@ -25,167 +217,14 @@ function Get-MusicSettings {
         return $null
     }
     
-    try {
-        $musicPath = $MusicPathTextbox.Text
-        if([string]::IsNullOrWhiteSpace($musicPath)) {
-            Write-Host "Background music is enabled but no music file/folder is selected." -ForegroundColor Yellow
-            return $null
-        }
-        if(!(Test-Path $musicPath)) {
-            Write-Host "Background music file/folder not found: $musicPath" -ForegroundColor Yellow
-            return $null
-        }
-        
-        # Determine if path is file or folder
-        $selectedMusicFile = $null
-        if(Test-Path $musicPath -PathType Container) {
-            # Check if it's OneDrive and warn user
-            if($musicPath -match "OneDrive") {
-                Write-Host "WARNING: OneDrive folder detected. This may be slow if files aren't downloaded locally." -ForegroundColor Yellow
-            }
-            
-            # It's a folder - find best matching music file(s)
-            Write-Host "Searching for music files in folder: $musicPath" -ForegroundColor Cyan
-            Write-Host "Scanning folder and subfolders (this may take a moment for large libraries)..." -ForegroundColor Yellow
-            $musicFiles = Get-ChildItem -Path $musicPath -Recurse -Include *.mp3,*.wav,*.m4a,*.aac | Select-Object -ExpandProperty FullName
-            Write-Host "Found $($musicFiles.Count) music files" -ForegroundColor Green
-            
-            if($musicFiles.Count -eq 0) {
-                Write-Host "No music files found in selected folder" -ForegroundColor Yellow
-                return $null
-            }
-            
-            # Get FFmpeg paths for duration detection
-            . "$PSScriptRoot\PrereqManager.ps1"
-            $ffmpegPaths = Ensure-FFmpeg
-            $ffprobe = $ffmpegPaths.FFprobe
-            $ffmpeg = $ffmpegPaths.FFmpeg
-            
-            # Use cached music folder analysis
-            . "$PSScriptRoot\MusicFolderCache.ps1"
-            $musicFilesWithDuration = Get-MusicFolderCache -FolderPath $musicPath -FFprobe $ffprobe
-            
-            if($musicFilesWithDuration.Count -eq 0) {
-                Write-Host "No valid music files found or analyzed" -ForegroundColor Yellow
-                return $null
-            }
-            
-            # Sort by duration
-            $musicFilesWithDuration = $musicFilesWithDuration | Sort-Object Duration
-            
-            # Try to find single file that fits
-            $bestMatch = $null
-            $bestDiff = [int]::MaxValue
-            
-            foreach($file in $musicFilesWithDuration) {
-                if($file.Duration -le $TargetLength) {
-                    $diff = $TargetLength - $file.Duration
-                    if($diff -lt $bestDiff) {
-                        $bestDiff = $diff
-                        $bestMatch = $file
-                    }
-                    Write-Host "  $($file.Name): $($file.Duration)s (diff: ${diff}s)" -ForegroundColor Gray
-                } else {
-                    Write-Host "  $($file.Name): $($file.Duration)s (too long)" -ForegroundColor DarkGray
-                }
-            }
-            
-            if($bestMatch) {
-                $selectedMusicFile = $bestMatch.Path
-                Write-Host "Selected single music file: $($bestMatch.Name) (best fit for ${TargetLength}s video)" -ForegroundColor Green
-            } else {
-                # No single file fits - need to concatenate multiple files
-                Write-Host "No single file fits. Concatenating multiple songs..." -ForegroundColor Yellow
-                
-                $selectedFiles = @()
-                $totalDuration = 0
-                
-                # Pick songs until we reach the target duration
-                foreach($file in $musicFilesWithDuration) {
-                    if($totalDuration -ge $TargetLength) {
-                        break
-                    }
-                    $selectedFiles += $file
-                    $totalDuration += $file.Duration
-                    Write-Host "  Adding: $($file.Name) ($($file.Duration)s) - Total: ${totalDuration}s" -ForegroundColor Cyan
-                }
-                
-                if($selectedFiles.Count -eq 0) {
-                    Write-Host "Unable to find suitable music files" -ForegroundColor Yellow
-                    return $null
-                }
-                
-                # Create concatenated music file
-                $tempMusicFile = Join-Path $env:TEMP "concatenated_music_$(Get-Date -Format 'yyyyMMdd_HHmmss').mp3"
-                Write-Host "Creating concatenated music file: $tempMusicFile" -ForegroundColor Cyan
-                
-                # Create concat file list
-                $concatListFile = Join-Path $env:TEMP "music_concat_list.txt"
-                $concatContent = ""
-                foreach($file in $selectedFiles) {
-                    # Escape single quotes and use forward slashes for FFmpeg
-                    $escapedPath = $file.Path.Replace("\", "/").Replace("'", "'\\''")
-                    $concatContent += "file '$escapedPath'`n"
-                }
-                # Use ASCII encoding to avoid UTF-8 BOM issues with FFmpeg
-                [System.IO.File]::WriteAllText($concatListFile, $concatContent, [System.Text.Encoding]::ASCII)
-                
-                # Concatenate music files (re-encode to ensure compatibility)
-                $concatArgs = "-f concat -safe 0 -i " + [char]34 + $concatListFile + [char]34 + " -c:a libmp3lame -b:a 192k " + [char]34 + $tempMusicFile + [char]34 + " -y"
-                Write-Host "FFmpeg concat command: $concatArgs" -ForegroundColor Gray
-                $process = Start-Process -FilePath $ffmpeg -ArgumentList $concatArgs -PassThru -Wait -NoNewWindow
-                
-                if($process.ExitCode -ne 0 -or !(Test-Path $tempMusicFile)) {
-                    Write-Host "Failed to concatenate music files" -ForegroundColor Red
-                    return $null
-                }
-                
-                $selectedMusicFile = $tempMusicFile
-                Write-Host "Successfully concatenated $($selectedFiles.Count) music files (total: ${totalDuration}s)" -ForegroundColor Green
-            }
-        } else {
-            # It's a file - use directly
-            $selectedMusicFile = $musicPath
-            Write-Host "Using selected music file: $(Split-Path $musicPath -Leaf)" -ForegroundColor Gray
-        }
-        
-        # Build music settings if we have a file
-        if($selectedMusicFile) {
-            # Parse overlay percentage (e.g., "20%" -> 0.2)
-            # Both audio streams will be normalized first, then mixed at these levels
-            $overlayText = $OverlayComboBox.Text
-            $overlayPercent = [int]($overlayText -replace '%', '')
-            $musicVolume = $overlayPercent / 100.0
-            $originalVolume = 1.0  # Keep video audio at reference level after normalization
-            
-            # Collect all music files used (for credits)
-            $usedMusicFiles = @()
-            if($selectedFiles -and $selectedFiles.Count -gt 0) {
-                # Multiple songs were concatenated - list all of them
-                foreach($file in $selectedFiles) {
-                    $usedMusicFiles += $file.Path
-                }
-            } else {
-                # Single song
-                $usedMusicFiles += $selectedMusicFile
-            }
-            
-            $musicSettings = @{
-                FilePath = $selectedMusicFile
-                MusicVolume = $musicVolume
-                OriginalVolume = $originalVolume
-                UsedFiles = $usedMusicFiles
-            }
-            
-            Write-Host "Music overlay enabled: $(Split-Path $selectedMusicFile -Leaf) (Music: $($overlayPercent)%, Original: $((1.0 - $musicVolume) * 100)%)" -ForegroundColor Gray
-            return $musicSettings
-        }
-    }
-    catch {
-        Write-Host "Error during music selection: $($_.Exception.Message)" -ForegroundColor Red
+    $musicPath = $MusicPathTextbox.Text
+    if([string]::IsNullOrWhiteSpace($musicPath)) {
+        Write-Host "Background music is enabled but no music file/folder is selected." -ForegroundColor Yellow
+        return $null
     }
     
-    return $null
+    # Call the helper function to do all the work
+    return Get-MusicFromPath -MusicPath $musicPath -TargetLength $TargetLength -OverlayText $OverlayComboBox.Text
 }
 
 # === Check Prerequisites on Startup ===
@@ -1158,6 +1197,15 @@ $BTNExtractSpeech.Add_Click({
             # Get music settings using shared function
             $musicSettings = Get-MusicSettings -TargetLength $TargetLength -EnableMusicCheckbox $CBEnableMusic -MusicPathTextbox $TBMusicPath -OverlayComboBox $CBMusicOverlay
             
+            # Generate music credits if music is enabled
+            if($musicSettings) {
+                . "$PSScriptRoot\GenerateMusicCredits.ps1"
+                $videoDir = Split-Path $outputPath -Parent
+                $videoName = [System.IO.Path]::GetFileNameWithoutExtension($outputPath)
+                $creditsFile = Join-Path $videoDir ($videoName + "_MusicCredits.txt")
+                Generate-MusicCredits -MusicFiles $musicSettings.UsedFiles -OutputPath $creditsFile
+            }
+            
             # Load VideoSummaryCreator
             . "$PSScriptRoot\VideoSummaryCreator.ps1"
             
@@ -1492,118 +1540,18 @@ $BTNAddMusicToSource.Add_Click(
                 $sourceLength = [int]((get-content C:\Windows\Temp\sourcelength.txt).Split(".")[0])
                 write-host "Source video length: $sourceLength seconds" -ForegroundColor Cyan
                 
-                # Select music file (same logic as summary)
-                $selectedMusicFile = $null
-                try {
-                if(Test-Path $musicPath -PathType Container) {
-                    # Check if it's OneDrive and warn user
-                    if($musicPath -match "OneDrive") {
-                        write-host "WARNING: OneDrive folder detected" -ForegroundColor Yellow
-                        $oneDriveWarning = [System.Windows.Forms.MessageBox]::Show(
-                            "OneDrive folder detected. This may be very slow for large music libraries.`n`nRecommendations:`n• Copy music to a local folder`n• Select a specific file instead`n• Ensure files are downloaded locally`n`nContinue?",
-                            "OneDrive Warning",
-                            [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                            [System.Windows.Forms.MessageBoxIcon]::Warning
-                        )
-                        if($oneDriveWarning -eq [System.Windows.Forms.DialogResult]::No) {
-                            return
-                        }
-                    }
-                    
-                    write-host "Searching for music in folder: $musicPath" -ForegroundColor Cyan
-                    write-host "Scanning folder and subfolders..." -ForegroundColor Yellow
-                    $musicFiles = Get-ChildItem -Path $musicPath -Recurse -Include *.mp3,*.wav,*.m4a,*.aac | Select-Object -ExpandProperty FullName
-                    write-host "Found $($musicFiles.Count) music files" -ForegroundColor Green
-                    
-                    if($musicFiles.Count -eq 0) {
-                        [System.Windows.Forms.MessageBox]::Show("No music files found in folder.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-                        return
-                    }
-                    
-                    # Use cached music folder analysis
-                    . "$PSScriptRoot\MusicFolderCache.ps1"
-                    $musicFilesWithDuration = Get-MusicFolderCache -FolderPath $musicPath -FFprobe $ffprobe
-                    
-                    if($musicFilesWithDuration.Count -eq 0) {
-                        [System.Windows.Forms.MessageBox]::Show("No valid music files found.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-                        return
-                    }
-                    
-                    $musicFilesWithDuration = $musicFilesWithDuration | Sort-Object Duration
-                    
-                    # Try single file
-                    $bestMatch = $null
-                    $bestDiff = [int]::MaxValue
-                    foreach($file in $musicFilesWithDuration) {
-                        if($file.Duration -le $sourceLength) {
-                            $diff = $sourceLength - $file.Duration
-                            if($diff -lt $bestDiff) {
-                                $bestDiff = $diff
-                                $bestMatch = $file
-                            }
-                        }
-                    }
-                    
-                    if($bestMatch) {
-                        $selectedMusicFile = $bestMatch.Path
-                        write-host "Selected: $($bestMatch.Name)" -ForegroundColor Green
-                    } else {
-                        # Concatenate multiple
-                        write-host "Concatenating multiple songs for ${sourceLength}s video..." -ForegroundColor Yellow
-                        $selectedFiles = @()
-                        $totalDuration = 0
-                        
-                        foreach($file in $musicFilesWithDuration) {
-                            if($totalDuration -ge $sourceLength) { break }
-                            $selectedFiles += $file
-                            $totalDuration += $file.Duration
-                            write-host "  Adding: $($file.Name) ($($file.Duration)s)" -ForegroundColor Cyan
-                        }
-                        
-                        if($selectedFiles.Count -eq 0) {
-                            [System.Windows.Forms.MessageBox]::Show("Unable to find suitable music.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-                            return
-                        }
-                        
-                        # Create concatenated file
-                        $tempMusicFile = Join-Path $env:TEMP "source_music_$(Get-Date -Format 'yyyyMMdd_HHmmss').mp3"
-                        $concatListFile = Join-Path $env:TEMP "source_music_concat.txt"
-                        $concatContent = ""
-                        foreach($file in $selectedFiles) {
-                            $concatContent += "file '" + $file.Path.Replace("'", "'\\''") + "'`n"
-                        }
-                        $concatContent | Set-Content -Path $concatListFile -Encoding UTF8
-                        
-                        $concatArgs = "-f concat -safe 0 -i " + [char]34 + $concatListFile + [char]34 + " -c copy " + [char]34 + $tempMusicFile + [char]34 + " -y"
-                        $process = start-process -FilePath $ffmpeg -ArgumentList $concatArgs -PassThru -Wait -NoNewWindow
-                        
-                        if($process.ExitCode -ne 0 -or !(Test-Path $tempMusicFile)) {
-                            [System.Windows.Forms.MessageBox]::Show("Failed to concatenate music.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-                            return
-                        }
-                        
-                        $selectedMusicFile = $tempMusicFile
-                        write-host "Concatenated $($selectedFiles.Count) files (${totalDuration}s)" -ForegroundColor Green
-                    }
-                } else {
-                    $selectedMusicFile = $musicPath
-                }
-                }
-                catch [System.Management.Automation.PipelineStoppedException] {
-                    write-host "Music selection cancelled by user" -ForegroundColor Yellow
-                    [System.Windows.Forms.MessageBox]::Show("Music selection cancelled.", "Cancelled", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-                    return
-                }
-                catch {
-                    write-host "Error during music selection: $($_.Exception.Message)" -ForegroundColor Red
-                    [System.Windows.Forms.MessageBox]::Show("Error selecting music:`n`n$($_.Exception.Message)", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                # Use unified music selection function
+                $musicSettings = Get-MusicFromPath -MusicPath $musicPath -TargetLength $sourceLength -OverlayText $overlayText
+                
+                if(-not $musicSettings) {
+                    [System.Windows.Forms.MessageBox]::Show("Failed to select music. Check console for details.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
                     return
                 }
                 
-                # Calculate volumes
-                $overlayPercent = [int]($overlayText -replace '%', '')
-                $musicVolume = $overlayPercent / 100.0
-                $originalVolume = 1.0 - $musicVolume
+                $selectedMusicFile = $musicSettings.FilePath
+                $musicVolume = $musicSettings.MusicVolume
+                $originalVolume = $musicSettings.OriginalVolume
+                $shouldLoop = $musicSettings.ShouldLoop
                 
                 # Create output path
                 $videoDir = Split-Path $VideoFile -Parent
@@ -1612,20 +1560,7 @@ $BTNAddMusicToSource.Add_Click(
                 # Generate music credits file
                 . "$PSScriptRoot\GenerateMusicCredits.ps1"
                 $creditsFile = Join-Path $videoDir ($outputName + "_MusicCredits.txt")
-                
-                # Collect all music files used
-                $usedMusicFiles = @()
-                if($selectedMusicFile -eq $tempMusicFile -and (Test-Path $tempMusicFile)) {
-                    # Multiple songs were concatenated - list all of them
-                    foreach($file in $selectedFiles) {
-                        $usedMusicFiles += $file.Path
-                    }
-                } else {
-                    # Single song
-                    $usedMusicFiles += $selectedMusicFile
-                }
-                
-                Generate-MusicCredits -MusicFiles $usedMusicFiles -OutputPath $creditsFile
+                Generate-MusicCredits -MusicFiles $musicSettings.UsedFiles -OutputPath $creditsFile
                 
                 write-host "`nProcessing source video with music..." -ForegroundColor Green
                 write-host "  Input: $VideoFile" -ForegroundColor Gray
@@ -1633,7 +1568,11 @@ $BTNAddMusicToSource.Add_Click(
                 write-host "  Output: $outputPath" -ForegroundColor Gray
                 
                 # Process video
-                $success = Add-MusicToVideo -VideoPath $VideoFile -MusicPath $selectedMusicFile -OutputPath $outputPath -MusicVolume $musicVolume -OriginalVolume $originalVolume
+                if($shouldLoop) {
+                    $success = Add-MusicToVideo -VideoPath $VideoFile -MusicPath $selectedMusicFile -OutputPath $outputPath -MusicVolume $musicVolume -OriginalVolume $originalVolume -RepeatSingleSong
+                } else {
+                    $success = Add-MusicToVideo -VideoPath $VideoFile -MusicPath $selectedMusicFile -OutputPath $outputPath -MusicVolume $musicVolume -OriginalVolume $originalVolume
+                }
                 
                 if($success) {
                     [System.Windows.Forms.MessageBox]::Show("Successfully added music to source video!`n`nOutput: $outputPath", "Success", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)

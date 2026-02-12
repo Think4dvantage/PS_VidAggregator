@@ -340,7 +340,12 @@ function aggregate-Video {
                 
                 # Add background music if enabled
                 if($BackgroundMusic -ne $null -and (Test-Path $BackgroundMusic.FilePath)) {
-                    $arguments += "-stream_loop -1 -i " + [char]34 + $BackgroundMusic.FilePath + [char]34 + " "
+                    $streamLoopArg = ""
+                    if($BackgroundMusic.ShouldLoop) {
+                        $streamLoopArg = "-stream_loop -1 "
+                        write-host "Background music will loop to fill video"
+                    }
+                    $arguments += $streamLoopArg + "-i " + [char]34 + $BackgroundMusic.FilePath + [char]34 + " "
                     $musicInputIndex = $inputIndex
                     write-host "Background music added as input index: $musicInputIndex"
                 }
@@ -432,7 +437,7 @@ function aggregate-Video {
                         # This ensures predictable mixing ratios regardless of source loudness
                         $musicVol = $BackgroundMusic.MusicVolume
                         $origVol = $BackgroundMusic.OriginalVolume
-                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout];[aout]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $origVol + "[orig];[$musicInputIndex]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $musicVol + "[music];[orig][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[finalout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[finalout]" + [char]34 + " -c:v $videoCodec -preset $codecPreset -b:v 20M -c:a aac -b:a 192k " + [char]34 + $OutputPath + [char]34 + " -y"
+                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout];[aout]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $origVol + "[orig];[$musicInputIndex]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $musicVol + "[music];[orig][music]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[finalout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[finalout]" + [char]34 + " -c:v $videoCodec -preset $codecPreset -b:v 20M -c:a aac -b:a 192k " + [char]34 + $OutputPath + [char]34 + " -y"
                     } else {
                         $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count + 1) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v $videoCodec -preset $codecPreset -b:v 20M -c:a aac -b:a 192k " + [char]34 + $OutputPath + [char]34 + " -y"
                     }
@@ -441,7 +446,7 @@ function aggregate-Video {
                         # Normalize both audio streams to the same loudness level, then mix
                         $musicVol = $BackgroundMusic.MusicVolume
                         $origVol = $BackgroundMusic.OriginalVolume
-                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout];[aout]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $origVol + "[orig];[$musicInputIndex]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $musicVol + "[music];[orig][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[finalout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[finalout]" + [char]34 + " -c:v $videoCodec -preset $codecPreset -b:v 20M -c:a aac -b:a 192k " + [char]34 + $OutputPath + [char]34 + " -y"
+                        $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout];[aout]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $origVol + "[orig];[$musicInputIndex]loudnorm=I=-16:TP=-1.5:LRA=11,volume=" + $musicVol + "[music];[orig][music]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[finalout]" + [char]34 + " -map " + [char]34 + "[out]" + [char]34 + " -map " + [char]34 + "[finalout]" + [char]34 + " -c:v $videoCodec -preset $codecPreset -b:v 20M -c:a aac -b:a 192k " + [char]34 + $OutputPath + [char]34 + " -y"
                     } else {
                         $arguments += $cut + $concat + "concat=n=" + ($Highlights.Count) + ":v=1:a=1[out][aout]"+ [char]34 + " -map " + [char]34 + "[out]" + [char]34 +" -map " + [char]34 + "[aout]" + [char]34 + " -c:v $videoCodec -preset $codecPreset -b:v 20M -c:a aac -b:a 192k " + [char]34 + $OutputPath + [char]34 + " -y"
                     }
