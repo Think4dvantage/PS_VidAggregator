@@ -96,7 +96,8 @@ function Get-MusicFromPath {
                 }
             }
             
-            $needsLooping = $false  # We have enough music now
+            # We want at least 10% buffer to ensure music doesn't cut out near the end
+            $needsLooping = $totalDuration -lt ($TargetLength * 1.1)
             Write-Host "  Concatenated music covers full video length (${totalDuration}s >= ${TargetLength}s)" -ForegroundColor Green
             Write-Host "`nSongs selected for concatenation:" -ForegroundColor Magenta
             for($idx = 0; $idx -lt $selectedFiles.Count; $idx++) {
@@ -109,28 +110,59 @@ function Get-MusicFromPath {
                 return $null
             }
                 
-                # Create concatenated music file
+                # Create concatenated music file using two-pass approach
+                # Pass 1: Decode each file to WAV (validates and normalizes format)
+                # Pass 2: Concatenate the validated WAV files
                 $tempMusicFile = Join-Path $env:TEMP "concatenated_music_$(Get-Date -Format 'yyyyMMdd_HHmmss').mp3"
                 Write-Host "Creating concatenated music file: $tempMusicFile" -ForegroundColor Cyan
+                Write-Host "Step 1: Validating and decoding files to WAV..." -ForegroundColor Yellow
                 
-                # Create concat file list
-                $concatListFile = Join-Path $env:TEMP "music_concat_list.txt"
+                $validWavFiles = @()
+                $tempWavDir = Join-Path $env:TEMP "music_wav_temp_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+                New-Item -ItemType Directory -Path $tempWavDir -Force | Out-Null
+                
+                for($i = 0; $i -lt $selectedFiles.Count; $i++) {
+                    $sourceFile = $selectedFiles[$i]
+                    $tempWav = Join-Path $tempWavDir "music_$i.wav"
+                    
+                    # Decode to WAV with strict format: 48kHz, stereo, 16-bit PCM
+                    $decodeArgs = "-i " + [char]34 + $sourceFile.Path + [char]34 + " -ar 48000 -ac 2 -sample_fmt s16 -c:a pcm_s16le " + [char]34 + $tempWav + [char]34 + " -y"
+                    Write-Host "  Decoding: $($sourceFile.Name)..." -ForegroundColor Gray -NoNewline
+                    
+                    $decodeProcess = Start-Process -FilePath $ffmpeg -ArgumentList $decodeArgs -PassThru -Wait -NoNewWindow -RedirectStandardError (Join-Path $tempWavDir "decode_error_$i.txt")
+                    
+                    if($decodeProcess.ExitCode -eq 0 -and (Test-Path $tempWav)) {
+                        $validWavFiles += $tempWav
+                        Write-Host " OK" -ForegroundColor Green
+                    } else {
+                        Write-Host " FAILED (skipping corrupted file)" -ForegroundColor Red
+                        Write-Host "    Error: $($sourceFile.Path)" -ForegroundColor DarkRed
+                    }
+                }
+                
+                if($validWavFiles.Count -eq 0) {
+                    Write-Host "No valid music files could be decoded" -ForegroundColor Red
+                    Remove-Item -Path $tempWavDir -Recurse -Force -ErrorAction SilentlyContinue
+                    return $null
+                }
+                
+                Write-Host "Step 2: Concatenating $($validWavFiles.Count) validated WAV files..." -ForegroundColor Yellow
+                
+                # Create concat list for validated WAV files
+                $concatListFile = Join-Path $tempWavDir "concat_list.txt"
                 $concatContent = ""
-                foreach($file in $selectedFiles) {
-                    # Escape single quotes and use forward slashes for FFmpeg
-                    $escapedPath = $file.Path.Replace("\", "/").Replace("'", "'\\''")
+                foreach($wavFile in $validWavFiles) {
+                    $escapedPath = $wavFile.Replace("\", "/").Replace("'", "'\\''")
                     $concatContent += "file '$escapedPath'`n"
                 }
-                # Use ASCII encoding to avoid UTF-8 BOM issues with FFmpeg
                 [System.IO.File]::WriteAllText($concatListFile, $concatContent, [System.Text.Encoding]::ASCII)
                 
-                Write-Host "Concat list file contents:" -ForegroundColor Gray
-                Write-Host $concatContent -ForegroundColor DarkGray
-                
-                # Concatenate music files (re-encode to ensure compatibility)
+                # Concatenate WAV files (no re-encoding needed, all same format)
                 $concatArgs = "-f concat -safe 0 -i " + [char]34 + $concatListFile + [char]34 + " -c:a libmp3lame -b:a 192k " + [char]34 + $tempMusicFile + [char]34 + " -y"
-                Write-Host "FFmpeg concat command: $concatArgs" -ForegroundColor Gray
                 $process = Start-Process -FilePath $ffmpeg -ArgumentList $concatArgs -PassThru -Wait -NoNewWindow
+                
+                # Cleanup temp WAV files
+                Remove-Item -Path $tempWavDir -Recurse -Force -ErrorAction SilentlyContinue
                 
                 if($process.ExitCode -ne 0 -or !(Test-Path $tempMusicFile)) {
                     Write-Host "Failed to concatenate music files (Exit code: $($process.ExitCode))" -ForegroundColor Red
@@ -148,7 +180,11 @@ function Get-MusicFromPath {
                 
                 $selectedMusicFile = $tempMusicFile
                 Write-Host "Successfully concatenated $($selectedFiles.Count) music files" -ForegroundColor Green
-            }
+                if($needsLooping) {
+                    Write-Host "Music will loop to fill entire video (concatenated: ${totalDuration}s, needed: ${TargetLength}s)" -ForegroundColor Yellow
+                } else {
+                    Write-Host "Concatenated music covers full video length" -ForegroundColor Green
+                }
         } else {
             # It's a file - use directly and always loop it
             $selectedMusicFile = $MusicPath
