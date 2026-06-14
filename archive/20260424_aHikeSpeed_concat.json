@@ -1,0 +1,65 @@
+﻿{
+    "Highlights":  [
+                       {
+                           "End":  "00:00:06",
+                           "Comment":  "Start in Beatenberg Waldegg",
+                           "Type":  "video",
+                           "Start":  "00:00:01"
+                       },
+                       {
+                           "End":  "00:01:38",
+                           "Comment":  "past the Tandems launching at Hohwald",
+                           "Type":  "video",
+                           "Start":  "00:01:33"
+                       },
+                       {
+                           "End":  "00:02:27",
+                           "Comment":  "Snow was hard and kind of icy but easy to walk on",
+                           "Type":  "video",
+                           "Start":  "00:02:22"
+                       },
+                       {
+                           "End":  "00:03:26",
+                           "Comment":  "Arriving at Unterburgfeldstand",
+                           "Type":  "video",
+                           "Start":  "00:03:22"
+                       },
+                       {
+                           "End":  "00:03:32",
+                           "Comment":  "forgot to film my launch",
+                           "Type":  "video",
+                           "Start":  "00:03:27"
+                       },
+                       {
+                           "End":  "00:05:10",
+                           "Comment":  "flying towards hohwald",
+                           "Type":  "video",
+                           "Start":  "00:05:05"
+                       },
+                       {
+                           "End":  "00:09:05",
+                           "Comment":  "Past the empty Amisbühl Launch",
+                           "Type":  "video",
+                           "Start":  "00:09:00"
+                       },
+                       {
+                           "End":  "00:11:20",
+                           "Comment":  "riding one thermal but not there for Thermals",
+                           "Type":  "video",
+                           "Start":  "00:11:15"
+                       },
+                       {
+                           "End":  "00:23:25",
+                           "Comment":  "Landing at Interlaken Höhenmatte",
+                           "Type":  "video",
+                           "Start":  "00:23:15"
+                       }
+                   ],
+    "SummaryLength":  "00:01:30",
+    "BackgroundMusic":  {
+                            "OverlayPercentage":  "80%",
+                            "FilePath":  "C:\\Users\\rapha\\OneDrive\\Audio\\Lofi",
+                            "Enabled":  true
+                        },
+    "SummaryName":  "20260424_Summary"
+}

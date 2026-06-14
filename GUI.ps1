@@ -305,7 +305,13 @@ if ($FileBrowser.FileNames.Count -gt 1) {
         
         # Remove trailing numbers (e.g., "Date_FullFlight1" -> "Date_FullFlight")
         $baseName = $baseName -replace '\d+$', ''
+        # Fall back to a "_concat" suffix if the generated name collides with any input
+        if ($baseName -eq '') { $baseName = 'concat' }
         $outputFile = Join-Path $directory ($baseName + ".mp4")
+        $allInputPaths = $FileBrowser.FileNames | ForEach-Object { [System.IO.Path]::GetFullPath($_) }
+        if ($allInputPaths -contains [System.IO.Path]::GetFullPath($outputFile)) {
+            $outputFile = Join-Path $directory ($baseName + "_concat.mp4")
+        }
         
         # Source the concatenation function
         . "$PSScriptRoot\VideoConcatenator.ps1"
@@ -430,6 +436,9 @@ function Save-GUIDataImmediate {
             }
         }
     
+        # Sort highlights by start time before saving so JSON order matches timeline
+        $data.Highlights = @($data.Highlights | Sort-Object { [TimeSpan]::Parse($_.Start).TotalSeconds })
+
         $data | ConvertTo-Json -Depth 10 | Set-Content -Path $Global:archiveFile -Encoding UTF8
         write-host "Data saved to $Global:archiveFile"
     }
@@ -471,11 +480,12 @@ function Load-GUIData {
                 }
             }
         
-            # Load Highlights
+            # Load Highlights - sort by start time so order in JSON doesn't matter
             if($data.Highlights -and $data.Highlights.Count -gt 0) {
-                foreach($highlight in $data.Highlights) {
-                    # Skip empty or invalid highlights
-                    if(-not $highlight.Start -or $highlight.Start -eq "00:00:00") {
+                $sortedHighlights = $data.Highlights | Sort-Object { [TimeSpan]::Parse($_.Start).TotalSeconds }
+                foreach($highlight in $sortedHighlights) {
+                    # Skip highlights with no start time (blank/uninitialized rows)
+                    if(-not $highlight.Start) {
                         write-host "Skipping empty highlight"
                         continue
                     }
